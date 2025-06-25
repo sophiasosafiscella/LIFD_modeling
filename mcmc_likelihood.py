@@ -1,12 +1,12 @@
+import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnchoredText
 import numpy as np
 import numpy.polynomial.legendre as leg
 import emcee
-from pint.residuals import Residuals
 import pint.logging
 pint.logging.setup(level="ERROR")
-import astropy.units as u
-from utils import get_dmx_observations, map_domain
 from fit_coefficients import my_legfit
+from tqdm import tqdm
 
 def log_prior(theta):
     a1, a3, a5 = theta  # These are priors on the MONIMIAl coefficients, not on the LEGENDRE coefficients
@@ -15,68 +15,52 @@ def log_prior(theta):
     return -np.inf
 
 
-def lnlike(theta, pulsar_data, weight=False):
+def lnlike(theta, filtered_obs, weight=False):
 
     a1, a3, a5 = theta
+    diffs_arr = []
 
-    # Array to store the differences between the fitted Legendre series and the residuals
-    diffs_arr = np.full(pulsar_data.toas.ntoas, np.nan)
-
-    # Array to store the TOA errors
-    sig_tot = np.full(pulsar_data.toas.ntoas, np.nan)
-
-    N: int = 0
-    for n, window in enumerate(pulsar_data.dmx_ranges):
-
-        # We find the observations in the windows and the corresponding frequencies
-        observations_in_window = get_dmx_observations(pulsar_data.toas, window[0], window[1])
-        n_observations_in_window = observations_in_window.ntoas
-        frequencies = np.array(observations_in_window.get_freqs().to(u.GHz).value)  # Convert frequencies to GHz
-
-        # We make sure there are observations in both bands
-        lowerband_ok = np.any((0.725 <= frequencies) & (frequencies <= 0.916))
-        upperband_ok = np.any((1.156 <= frequencies) & (frequencies <= 1.882))
-        if (not lowerband_ok) or (not upperband_ok):
-#            print("Skipped a window because it didn't have observations in both bands")
-            continue
-
-        # Calculate residuals (in microseconds) with the simplified model
-        res_object = Residuals(observations_in_window, pulsar_data.tm)
-        residuals = res_object.time_resids.to(u.us).value
-        frequencies, residuals = zip(*sorted(zip(frequencies, residuals)))
-        frequencies, residuals = np.array(frequencies), np.array(residuals)
-
-        # Map the frequencies to the range [-1, 1]
-        x_values = map_domain(frequencies)
+    for x, y in zip(filtered_obs.xvals, filtered_obs.resids):
 
         # Calculate the coefficients for the unscaled and unshifted Legendre basis polynomials
         c1c3c5 = leg.poly2leg([0.0, a1, 0.0, a3, 0.0, a5])[[1, 3, 5]]
-        c0c2c4 = my_legfit(x=x_values, y=residuals.astype(np.float64), deg=5, coeffs=c1c3c5, full=False)
-        leg_pfit_coef = np.array([c0c2c4[0], c1c3c5[0], c0c2c4[1], c1c3c5[1], c0c2c4[2], c1c3c5[2]])
-        pfit = leg.Legendre(leg_pfit_coef)
+        c0c2c4 = my_legfit(x=x, y=y.astype(np.float64), deg=5, coeffs=c1c3c5, full=False)
+        pfit = leg.Legendre(np.array([c0c2c4[0], c1c3c5[0], c0c2c4[1], c1c3c5[1], c0c2c4[2], c1c3c5[2]]))
 
         # Calculate the difference between the fitted Legendre series and the residuals
-        diffs_arr[N: N+n_observations_in_window] = residuals - pfit(x_values)
-        sig_tot[N: N+n_observations_in_window] = res_object.get_data_error()    # TODO: we are assuming there's no correlation (for now)
-        N += n_observations_in_window
+        diffs_arr.append(y - pfit(x))
+
+        '''
+        fig2, ax2 = plt.subplots()
+        ax2.plot(x, y, "o")
+        ax2.plot(x, pfit(x), lw=2, label="Fitted Legendre Polynomial")
+        ax2.set_xlabel("Normalized Inverse Frequency")
+        ax2.set_ylabel(r'Residuals [$\mu s$]')
+        at = AnchoredText(
+        f"Legendre series coefficients: \n $C_0$ = {c0c2c4[0]} \n $C_1$ = {c1c3c5[0]} \n $C_2$ = {c0c2c4[1]} \n $C_3$ = {c1c3c5[1]} \n $C_4$ = {c0c2c4[2]} \n $C_5$ = {c1c3c5[2]}",
+                                      prop=dict(size=10), frameon=True, loc='upper left')
+        at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
+        ax2.add_artist(at)
+        ax2.legend(loc="upper right")
+        plt.tight_layout()
+        plt.show()
+        '''
 
     # Use these differences to calculate the ln(likelihood)
-    diffs_arr = diffs_arr[np.logical_not(np.isnan(diffs_arr))]
-    sig_tot = sig_tot[np.logical_not(np.isnan(sig_tot))]
+    diffs_arr = np.concatenate(diffs_arr)
+    sig_tot = np.concatenate(filtered_obs.resids_errs)
 
-    lnL = -(N / 2) * np.log(2 * np.pi) - np.log(sig_tot).sum() - 0.5 * np.power(diffs_arr/ sig_tot,
-                                                                                2).sum()  # can speed up the square root of squaring
-
+    lnL = -0.5 * np.sum(np.log(2 * np.pi) + 2 * np.log(sig_tot) + (diffs_arr / sig_tot) ** 2)
     return lnL
 
 
-def lnprob(theta, pulsar_data, weight=False):
+def lnprob(theta, filtered_obs, weight=False):
     lp = log_prior(theta)
 
     if not np.isfinite(lp):
         return -np.inf
 
-    return lp + lnlike(theta, pulsar_data, weight=weight)
+    return lp + lnlike(theta, filtered_obs, weight=weight)
 
 
 # http://jakevdp.github.io/blog/2015/08/07/frequentism-and-bayesianism-5-model-selection/

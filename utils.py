@@ -1,7 +1,18 @@
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+from pint.residuals import Residuals
 from pypulse.utils import weighted_moments
+import astropy.units as u
+from dataclasses import dataclass
+
+@dataclass
+class FilteredObservations:
+    dmx_ranges: np.ndarray
+    xvals: list[np.ndarray]
+    resids: list[np.ndarray]
+    resids_errs: list[np.ndarray]
+
 
 def get_dmx_ranges(model, observations):
     """
@@ -40,6 +51,8 @@ def get_dmx_observations(observations, low_mjd, high_mjd):
     mask = (low_mjd < mjds) & (mjds < high_mjd)
 
     return observations[mask]
+
+
 
 def epoch_scrunch(toas, data=None, errors=None, epochs=None, decimals=0, getdict=False, weighted=False, harmonic=False):
     if epochs is None:
@@ -91,28 +104,42 @@ def epoch_scrunch(toas, data=None, errors=None, epochs=None, decimals=0, getdict
         return epochs, retval
     return epochs, retval, retvalerrs
 
-def broadband_observations(toas):
-    """Function that, given a set of TOAs, separates the narrowband observations_in_window"""
+def filter_observations(toas, timing_model):
+    """Given TOAs, extract broadband observations and select DMX windows with both frequency bands."""
 
-    # ----------------------------------------------------------------
-    # First, we obtain the backend that was used in each epoch
-    # ----------------------------------------------------------------
-
+    # Filter for GUPPI backend only
     backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
+    broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
 
-    # ----------------------------------------------------------------
-    # Now we separate the GASP observations_in_window and the GUPPI observations_in_window
-    # ----------------------------------------------------------------
+    # Find the DMX windows
+    dmx_ranges = get_dmx_ranges(timing_model, broadband_TOAs)
 
-    # Firstly, we mark with 'True' the GUPPI observations_in_window
-    broadband_ok = np.isin(backends, ['GUPPI'])
+    # Get rid of the DMX and FD parameters to create the simplified timing model
+    timing_model.remove_component("DispersionDMX")
+    timing_model.remove_component("FD")
 
-    # Now we separate the broadband TOAs
-    broadband_TOAs = toas[broadband_ok]
-    n_broadband = np.count_nonzero(broadband_ok)
-    print('Broadband TOAs = ' + str(n_broadband))
+    # Precompute outputs
+    valid_dmx_ranges = []
+    valid_resids = []
+    valid_resids_errs = []
+    valid_xvals = []
 
-    return broadband_TOAs
+    for window in dmx_ranges:
+        obs_in_window = get_dmx_observations(broadband_TOAs, window[0], window[1])
+        freqs = obs_in_window.get_freqs().value
+
+        if (np.any((725 <= freqs) & (freqs <= 916)) and np.any((1156 <= freqs) & (freqs <= 1882))):
+
+            res_object =   Residuals(obs_in_window, timing_model)
+
+            valid_dmx_ranges.append(window)
+            valid_resids.append(res_object.time_resids.to(u.us).value)
+            valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
+            valid_xvals.append(map_domain(freqs))
+
+    return FilteredObservations(dmx_ranges=np.array(valid_dmx_ranges), xvals=valid_xvals,
+                                resids=valid_resids, resids_errs=valid_resids_errs)
+
 
 def make_plot(PSR_name, df):
     windows_centers = df["DMXR1"] + (df["DMXR2"] - df["DMXR1"]) / 2.0
