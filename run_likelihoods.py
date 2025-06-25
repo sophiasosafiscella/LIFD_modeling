@@ -1,15 +1,12 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from glob import glob
 from pint.models import get_model
 from pint.toa import get_TOAs
-from utils import filter_observations
+from utils import filter_observations, corner_plot
 from mcmc_likelihood import lnprob, compute_mcmc
 import pickle
 import os.path
-
-
-def save_samples(samples,filename="samples.npy"):
-    np.save("samples/"+filename,samples)
 
 # Global parameters
 PSR_name: str = "J1643-1224"
@@ -19,6 +16,7 @@ weight: bool = False
 parfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.0.1/narrowband/par/{PSR_name}_PINT_*.nb.par")[0]
 timfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.0.1/narrowband/tim/{PSR_name}_PINT_*.nb.tim")[0]
 pickle_file: str = f"./results/{PSR_name}_filtered_obs.pkl"
+samples_file: str = f"./results/{PSR_name}_samples.npy"
 
 # Load the timing model and TOAs
 timing_model = get_model(parfile)  # Ecliptical coordiantes
@@ -35,8 +33,27 @@ else:
 
 # Initial position in the 3D space of (C1, C3, C5) from where the walkers will start. I got the values from the
 # plots I created previously
-pinit = np.array([350.0, 5.0, 0.0])
+#pinit = np.array([350.0, 5.0, 0.0])
+pinit = np.array([342.9607408562299, 3.6656647122634305, -0.21600401837611255])
 
 # Run the MCMC sampler
-samples = compute_mcmc(lnprob, (filtered_obs, weight), pinit)
-save_samples(samples,filename=f"{PSR_name}_samples")
+if os.path.exists(samples_file):
+    samples = np.load(samples_file)
+else:
+    samples = compute_mcmc(lnprob, (filtered_obs, weight), pinit)
+    np.save(samples_file, samples)
+
+# Present the results
+corner_plot(samples, PSR_name)
+
+param_labels = ["$a_1$", "$a_3$", "$a_5$"]
+quantiles = [16, 50, 84]  # For 68% credible interval
+
+for i in range(samples.shape[1]):
+    q16, q50, q84 = np.percentile(samples[:, i], quantiles)
+    median = q50
+    minus = q50 - q16
+    plus = q84 - q50
+    print(f"{param_labels[i]} = {median:.4f} (+{plus:.4f}/-{minus:.4f})")
+
+

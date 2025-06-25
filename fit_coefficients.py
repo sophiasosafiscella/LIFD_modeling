@@ -1,5 +1,4 @@
 import warnings
-
 import numpy as np
 
 def leg_vander_ordinate(x, y, deg, coeffs):

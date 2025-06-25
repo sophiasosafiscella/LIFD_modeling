@@ -6,7 +6,6 @@ import emcee
 import pint.logging
 pint.logging.setup(level="ERROR")
 from fit_coefficients import my_legfit
-from tqdm import tqdm
 
 def log_prior(theta):
     a1, a3, a5 = theta  # These are priors on the MONIMIAl coefficients, not on the LEGENDRE coefficients
@@ -64,7 +63,7 @@ def lnprob(theta, filtered_obs, weight=False):
 
 
 # http://jakevdp.github.io/blog/2015/08/07/frequentism-and-bayesianism-5-model-selection/
-def compute_mcmc(lnprob, args, pinit, nwalkers=10, niter=500, threads=4):
+def compute_mcmc(lnprob, args, pinit, nwalkers=10, niter=5000, threads=4):
 
     # Number of variables we're MCMCing over
     ndim = len(pinit)
@@ -72,7 +71,6 @@ def compute_mcmc(lnprob, args, pinit, nwalkers=10, niter=500, threads=4):
     # Initial position in the 3D space of (C1, C3, C5) from where the walkers will start
     nwalkers = 3 * ndim            # emcee requires nwalkers > ndim
     p0 = pinit + 1e-4 * np.random.randn(nwalkers, ndim)
-#    p0 = [pinit + 1e-4*pinit*np.random.randn(ndim) for i in range(nwalkers)]
 
     # Set up the sampler
     sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, args=args, threads=threads)
@@ -80,9 +78,9 @@ def compute_mcmc(lnprob, args, pinit, nwalkers=10, niter=500, threads=4):
 
     # Burn the ends of the samples chains
     if niter <= 50000:
-        burn = niter/10
+        burn = int(niter/10)
     if burn > 5000:
         burn = 5000
 
-    samples = sampler.chain[:, burn:, :].reshape((-1, ndim))  #can also just use flatchain
+    samples = sampler.get_chain(discard=burn, flat=True)
     return samples

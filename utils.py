@@ -1,6 +1,7 @@
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+import corner
 from pint.residuals import Residuals
 from pypulse.utils import weighted_moments
 import astropy.units as u
@@ -53,6 +54,86 @@ def get_dmx_observations(observations, low_mjd, high_mjd):
     return observations[mask]
 
 
+def map_domain(frequencies):
+
+    lambdas = np.power(frequencies, -1.0)  # Inverse of the frequency
+    x_aux_values = (lambdas - np.amin(lambdas))/(np.amax(lambdas)-np.amin(lambdas))  # Between 0 and 1
+    x_values = np.subtract(np.multiply(x_aux_values, 2.0), 1.0)                      # Between -1 and 1
+
+    return x_values
+
+
+def filter_observations(toas, timing_model):
+    """Given TOAs, extract broadband observations and select DMX windows with both frequency bands."""
+
+    # Filter for GUPPI backend only
+    backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
+    broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
+
+    # Find the DMX windows
+    dmx_ranges = get_dmx_ranges(timing_model, broadband_TOAs)
+
+    # Get rid of the DMX and FD parameters to create the simplified timing model
+    timing_model.remove_component("DispersionDMX")
+    timing_model.remove_component("FD")
+
+    # Precompute outputs
+    valid_dmx_ranges = []
+    valid_resids = []
+    valid_resids_errs = []
+    valid_xvals = []
+
+    for window in dmx_ranges:
+        obs_in_window = get_dmx_observations(broadband_TOAs, window[0], window[1])
+        freqs = obs_in_window.get_freqs().value
+
+        if (np.any((725 <= freqs) & (freqs <= 916)) and np.any((1156 <= freqs) & (freqs <= 1882))):
+
+            res_object = Residuals(obs_in_window, timing_model)
+
+            valid_dmx_ranges.append(window)
+            valid_resids.append(res_object.time_resids.to(u.us).value)
+            valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
+            valid_xvals.append(map_domain(freqs))
+
+    return FilteredObservations(dmx_ranges=np.array(valid_dmx_ranges), xvals=valid_xvals,
+                                resids=valid_resids, resids_errs=valid_resids_errs)
+
+
+def make_plot(PSR_name, df):
+    windows_centers = df["DMXR1"] + (df["DMXR2"] - df["DMXR1"]) / 2.0
+
+    sns.set_style("ticks")
+    sns.set_context("paper", font_scale=3.0)
+    fig, ax = plt.subplots(nrows=6, ncols=1, figsize=(12, 24), sharex=True,
+                           gridspec_kw={'hspace': 0})
+    fig.suptitle(PSR_name + " - Monomial Coefficients")
+
+    means = df[['a0', 'a1', 'a2', 'a3', 'a4', 'a5']].mean(axis=0)
+    print(f"a1 = {means['a1']}")
+    print(f"a3 = {means['a3']}")
+    print(f"a5 = {means['a5']}")
+
+    # Plot and label each subplot
+    colors = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5']
+    for i in range(6):
+        ax[i].scatter(windows_centers, df[f'a{i}'], color=colors[i])
+        ax[i].axhline(y=means[f'a{i}'], color='black', lw=4, linestyle='--')
+        ax[i].set_ylabel(f"$a_{i}$")
+        ax[i].grid(True)  # Add grid
+        ax[i].label_outer()  # Hide inner x labels and ticks
+
+        ax[i].text(0.2, 0.1, f'Mean = {round(means[f"a{i}"], 4)}', horizontalalignment='center', verticalalignment='center',
+                 transform=ax[i].transAxes)
+
+    ax[5].set_xlabel("Window Center [MJD]")
+
+    plt.tight_layout()
+    plt.savefig('./' + PSR_name + '_results.png')
+    plt.show()
+
+    return
+
 
 def epoch_scrunch(toas, data=None, errors=None, epochs=None, decimals=0, getdict=False, weighted=False, harmonic=False):
     if epochs is None:
@@ -104,85 +185,23 @@ def epoch_scrunch(toas, data=None, errors=None, epochs=None, decimals=0, getdict
         return epochs, retval
     return epochs, retval, retvalerrs
 
-def filter_observations(toas, timing_model):
-    """Given TOAs, extract broadband observations and select DMX windows with both frequency bands."""
+def corner_plot(samples, PSR_name):
+    fig = corner.corner(
+        samples,
+        labels=["$a_1$", "$a_3$", "$a_5$"],
+        show_titles=True,
+        title_fmt=".4f",
+        quantiles=[0.16, 0.5, 0.84],  # 68% credible interval
+        plot_datapoints=True,
+        color="blue",  # Default for contours
+        hist_kwargs={"color": "gray"},
+        label_kwargs={"fontsize": 14},
+        title_kwargs={"fontsize": 12},
+        weights=None,  # Don't weight by anything
+        truths=np.median(samples, axis=0),  # Draw crosshairs at medians
+        plot_density=True,
+        fill_contours=True,
+        contour_kwargs={"colors": ["black"]}
+    )
 
-    # Filter for GUPPI backend only
-    backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
-    broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
-
-    # Find the DMX windows
-    dmx_ranges = get_dmx_ranges(timing_model, broadband_TOAs)
-
-    # Get rid of the DMX and FD parameters to create the simplified timing model
-    timing_model.remove_component("DispersionDMX")
-    timing_model.remove_component("FD")
-
-    # Precompute outputs
-    valid_dmx_ranges = []
-    valid_resids = []
-    valid_resids_errs = []
-    valid_xvals = []
-
-    for window in dmx_ranges:
-        obs_in_window = get_dmx_observations(broadband_TOAs, window[0], window[1])
-        freqs = obs_in_window.get_freqs().value
-
-        if (np.any((725 <= freqs) & (freqs <= 916)) and np.any((1156 <= freqs) & (freqs <= 1882))):
-
-            res_object =   Residuals(obs_in_window, timing_model)
-
-            valid_dmx_ranges.append(window)
-            valid_resids.append(res_object.time_resids.to(u.us).value)
-            valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
-            valid_xvals.append(map_domain(freqs))
-
-    return FilteredObservations(dmx_ranges=np.array(valid_dmx_ranges), xvals=valid_xvals,
-                                resids=valid_resids, resids_errs=valid_resids_errs)
-
-
-def make_plot(PSR_name, df):
-    windows_centers = df["DMXR1"] + (df["DMXR2"] - df["DMXR1"]) / 2.0
-
-    sns.set_style("ticks")
-    sns.set_context("paper", font_scale=3.0)
-    fig, ax = plt.subplots(nrows=6, ncols=1, figsize=(12, 24), sharex=True,
-                           gridspec_kw={'hspace': 0})
-    fig.suptitle(PSR_name)
-
-    # Plot and label each subplot
-    colors = ['C0', 'C1', 'C2', 'C3', 'C4', 'C5']
-    for i in range(6):
-        ax[i].scatter(windows_centers, df[f'C{i}'], color=colors[i])
-        ax[i].set_ylabel(f"C{i}")
-        ax[i].grid(True)  # Add grid
-        ax[i].label_outer()  # Hide inner x labels and ticks
-
-    ax[5].set_xlabel("Window Center [MJD]")
-
-    plt.tight_layout()
-    plt.savefig('./' + PSR_name + '_results.png')
-    plt.show()
-
-    return
-
-
-def map_domain(frequencies):
-
-    lambdas = np.power(frequencies, -1.0)  # Inverse of the frequency
-    x_aux_values = (lambdas - np.amin(lambdas))/(np.amax(lambdas)-np.amin(lambdas))  # Between 0 and 1
-    x_values = np.subtract(np.multiply(x_aux_values, 2.0), 1.0)                      # Between -1 and 1
-
-    return x_values
-
-
-class PulsarData:
-    def __init__(self, name, toas, tm, dmx_ranges):
-        self.name = name
-        self.toas = toas
-        self.tm = tm
-        self.dmx_ranges = dmx_ranges
-
-    # The __str__() function controls what should be returned when the class object is represented as a string.
-    def __str__(self):
-        return f"{self.name}"
+    fig.savefig(f"./results/{PSR_name}_corner_plot.png", dpi=300)
