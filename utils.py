@@ -1,16 +1,25 @@
 import numpy as np
+import numpy.polynomial.legendre as leg
+import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnchoredText
 import corner
 from pint.residuals import Residuals
 from pypulse.utils import weighted_moments
 import astropy.units as u
 from dataclasses import dataclass
 
+from uncertainties import unumpy, ufloat
+
+from fit_coefficients import my_legfit
+
+
 @dataclass
 class FilteredObservations:
     dmx_ranges: np.ndarray
     xvals: list[np.ndarray]
+    freqs: list[np.ndarray]
     resids: list[np.ndarray]
     resids_errs: list[np.ndarray]
 
@@ -82,6 +91,7 @@ def filter_observations(toas, timing_model):
     valid_resids = []
     valid_resids_errs = []
     valid_xvals = []
+    valid_freqs = []
 
     for window in dmx_ranges:
         obs_in_window = get_dmx_observations(broadband_TOAs, window[0], window[1])
@@ -90,13 +100,15 @@ def filter_observations(toas, timing_model):
         if (np.any((725 <= freqs) & (freqs <= 916)) and np.any((1156 <= freqs) & (freqs <= 1882))):
 
             res_object = Residuals(obs_in_window, timing_model)
+            average = res_object.ecorr_average()
 
             valid_dmx_ranges.append(window)
             valid_resids.append(res_object.time_resids.to(u.us).value)
             valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
             valid_xvals.append(map_domain(freqs))
+            valid_freqs.append(freqs)
 
-    return FilteredObservations(dmx_ranges=np.array(valid_dmx_ranges), xvals=valid_xvals,
+    return FilteredObservations(dmx_ranges=np.array(valid_dmx_ranges), xvals=valid_xvals, freqs=valid_freqs,
                                 resids=valid_resids, resids_errs=valid_resids_errs)
 
 
@@ -204,4 +216,133 @@ def corner_plot(samples, PSR_name):
         contour_kwargs={"colors": ["black"]}
     )
 
-    fig.savefig(f"./results/{PSR_name}_corner_plot.png", dpi=300)
+#    fig.savefig(f"./results/{PSR_name}_corner_plot.png", dpi=300)
+    plt.show()
+
+def my_leg2poly(u_leg_coeffs):
+
+    '''
+    Transform the Legendre coefficients of a degree=5 Legendre polynomial (with uncertainties in the coefficients) to
+    the corresponding coefficients in the monomial base
+    :param u_leg_coeffs:
+    :return: u_poly_coeffs:
+    '''
+
+    # Define the transformation matrix
+    T = np.array([
+        [1, 0, -1 / 2, 0, 3 / 8, 0],
+        [0, 1, 0, -3 / 2, 0, 15 / 8],
+        [0, 0, 3 / 2, 0, -15 / 4, 0],
+        [0, 0, 0, 5 / 2, 0, -35 / 4],
+        [0, 0, 0, 0, 35 / 8, 0],
+        [0, 0, 0, 0, 0, 63 / 8]
+    ])
+
+    # Make the conversion
+
+    return np.dot(T, u_leg_coeffs.T)
+
+
+def find_a0a2a4(PSR_name, filtered_obs, a1a3a5, plot=False):
+
+    a0a2a4_arr = np.empty((len(filtered_obs.dmx_ranges), 3))
+    a0a2a4_err_arr = np.empty((len(filtered_obs.dmx_ranges), 3))
+
+    for n, (x, y) in enumerate(zip(filtered_obs.xvals, filtered_obs.resids)):
+
+        window = filtered_obs.dmx_ranges[n]
+        _, sorted_freqs = zip(*sorted(zip(x, filtered_obs.freqs[n])))
+        sorted_freqs = np.array(sorted_freqs)
+        x, y = zip(*sorted(zip(x, y)))
+        x, y = np.array(x), np.array(y)
+
+        # Calculate the coefficients for the unscaled and unshifted Legendre basis polynomials
+        c1c3c5 = leg.poly2leg([0.0, a1a3a5[0], 0.0, a1a3a5[1], 0.0, a1a3a5[2]])[[1, 3, 5]]
+        c0c2c4, c0c2c4_errs, _ = my_legfit(x=x, y=y.astype(np.float64), deg=5, coeffs=c1c3c5, full=True)
+
+        # Assemble the Legendre series
+        leg_coeffs = np.array([c0c2c4[0], c1c3c5[0], c0c2c4[1], c1c3c5[1], c0c2c4[2], c1c3c5[2]])
+        pfit = leg.Legendre(leg_coeffs)
+
+        # Find the coefficients and corresponding uncertaintites in the monomial base
+        u_leg_coeffs = unumpy.umatrix(leg_coeffs, [c0c2c4_errs[0], 0.0, c0c2c4_errs[1], 0.0, c0c2c4_errs[2], 0.0])
+        u_poly_coeffs = my_leg2poly(u_leg_coeffs)
+
+        a0a2a4_arr[[n], :] = u_poly_coeffs[[0, 2, 4]].nominal_values.T
+        a0a2a4_err_arr[[n], :] = u_poly_coeffs[[0, 2, 4]].std_devs.T
+
+        if plot:
+            sns.set_style("ticks")
+            fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, sharex=True, gridspec_kw={'height_ratios': [1, 2], 'hspace': 0})
+            ax2.plot(sorted_freqs, y, "o")
+            ax2.plot(sorted_freqs, pfit(x), lw=2, label="Fitted Legendre Polynomial")
+    #        ax2.set_xlabel("Legendre-Mapped Inverse Frequency")
+            ax2.set_xlabel("Frequency [MHz]")
+            ax2.set_ylabel(r'Residuals [$\mu s$]')
+            at = AnchoredText(
+                f"Power series coefficients: \n $a_0$ = {u_poly_coeffs[0].nominal_value} \n $a_1$ = {u_poly_coeffs[1].nominal_value} \n $a_2$ = {u_poly_coeffs[2].nominal_value} \n $a_3$ = {u_poly_coeffs[3].nominal_value} \n $a_4$ = {u_poly_coeffs[4].nominal_value} \n $a_5$ = {u_poly_coeffs[5].nominal_value}",
+                prop=dict(size=10), frameon=True, loc='upper right')
+            at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
+            ax2.add_artist(at)
+            ax2.grid()
+
+            ax1.scatter(sorted_freqs, y - pfit(x))
+            ax1.set_ylabel(r'Fit $-$ Residuals [$\mu s$]')
+            ax1.grid()
+
+            plt.suptitle("MJD " + str(window[0]) + " to " + str(window[1]))
+            plt.tight_layout()
+            plt.savefig(f"./results/final_fits/{PSR_name}/diffs_{n}.png")
+            plt.show()
+
+    return pd.DataFrame(np.hstack((a0a2a4_arr, a0a2a4_err_arr)), columns=['a0', 'a2', 'a4', 'a0_err', 'a2_err', 'a4_err'])
+
+
+def plot_a0a2a4(PSR_name, filtered_obs, a0a2a4):
+
+    DMXR1, DMXR2 = filtered_obs.dmx_ranges[:, 0], filtered_obs.dmx_ranges[:, 1]
+    windows_centers = DMXR1 + (DMXR2 - DMXR2) / 2.0
+
+    # Convert a2 to more natural units
+    u_a2 =  unumpy.umatrix(a0a2a4['a2'], a0a2a4['a2_err'])
+    D = ufloat(4.148808e9, 0.000003e9)
+    u_a2_new = u_a2 / D
+    a2_new = np.squeeze(np.asarray(u_a2_new.nominal_values))
+    a2_new_err = np.squeeze(np.asarray(u_a2_new.std_devs))
+
+
+    # Convert a4 to more natural units
+    u_a4 = unumpy.uarray(a0a2a4['a4'], a0a2a4['a4_err'])
+
+    sns.set_style("ticks")
+    sns.set_context("paper", font_scale=3.0)
+    fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(12, 16), sharex=True,
+                           gridspec_kw={'hspace': 0})
+    fig.suptitle(PSR_name + " - Monomial Coefficients")
+
+    # Plot and label each subplot
+    colors = ['C0', 'C1', 'C2']
+    for i in range(3):
+#        ax[i].set_ylabel(f"$a_{2*i}$")
+        ax[i].grid(True)  # Add grid
+        ax[i].label_outer()  # Hide inner x labels and ticks
+
+    ax[0].errorbar(x=windows_centers, y=a0a2a4['a0'], yerr=a0a2a4[f'a0_err'], color=colors[0], fmt='o')
+    ax[1].errorbar(x=windows_centers, y=a2_new, yerr=a2_new_err, color=colors[1], fmt='o')
+    ax[2].errorbar(x=windows_centers, y=a0a2a4['a4'], yerr=a0a2a4['a4_err'], color=colors[2], fmt='o')
+
+    ax[0].set_ylabel('$a_0~[\mu \mathrm{s}]$')
+    ax[1].set_ylabel('$a_2~[\mathrm{pc}~\mathrm{cm}^3]$')
+    ax[2].set_ylabel('$a_4~[\mu \mathrm{s}]$')
+    ax[0].set_ylim([-100.0,120.0])
+#    ax[1].set_ylim([0.0,150.0])
+#    ax[2].set_ylim([-80.0,80.0])
+
+
+    ax[2].set_xlabel("Window Center [MJD]")
+
+    plt.tight_layout()
+#    plt.savefig(f'./results/{PSR_name}/{PSR_name}_a0a2a4_results.png')
+    plt.show()
+
+    return

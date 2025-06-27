@@ -76,7 +76,7 @@ def find_dispersion_coefficients(psr_name:str, fixed_coeffs:bool=True, plot:bool
                               prop=dict(size=10), frameon=True, loc='upper left')
 
 #            at = AnchoredText(f"Legendre series coefficients: \n $C_0$ = {leg_pfit_coef[0]} \n $C_1$ = {leg_pfit_coef[1]} \n $C_2$ = {leg_pfit_coef[2]} \n $C_3$ = {leg_pfit_coef[3]} \n $C_4$ = {leg_pfit_coef[4]} \n $C_5$ = {leg_pfit_coef[5]}",#                              prop=dict(size=10), frameon=True, loc='upper left')
-            at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
+#            at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
 
             # Make some cool plots
             '''
@@ -95,7 +95,7 @@ def find_dispersion_coefficients(psr_name:str, fixed_coeffs:bool=True, plot:bool
             ax2.plot(new_x, pfit(new_x), lw=2, label="Fitted Legendre Polynomial")
 #            ax2.plot(x_values, power_series_pol(x_values), "-", lw=2, label="Power Series Polynomial fit")
             ax2.set_title("MJD " + str(window[0]) + " to " + str(window[1]))
-            ax2.set_xlabel("Normalized Inverse Frequency")
+            ax2.set_xlabel("Legendre-Mapped Inverse Frequency")
             ax2.set_ylabel(r'Residuals [$\mu s$]')
             ax2.add_artist(at)
             ax2.legend(loc="upper right")

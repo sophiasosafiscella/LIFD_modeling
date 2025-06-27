@@ -139,8 +139,28 @@ def fit(vander_f, x, y, deg, coeffs, rcond=None, full=False, w=None):
     scl[scl == 0] = 1
 
     # Solve the least squares problem.
-    c, resids, rank, s = np.linalg.lstsq(lhs.T/scl, rhs.T, rcond)
+    A = lhs.T/scl
+    c, resids, rank, s = np.linalg.lstsq(A, rhs.T, rcond)
     c = (c.T/scl).T
+
+    # Now compute the covariance matrix and standard errors
+    # Number of data points and number of coefficients
+    n = len(y)
+    p = A.shape[1]
+
+    # Estimate variance of the residuals
+    if resids.size > 0:
+        sigma2 = resids[0] / (n - p)  # unbiased estimate of variance
+    else:
+        # If residuals is empty (perfect fit or underdetermined), estimate it manually
+        y_fit = A @ coeffs
+        sigma2 = np.sum((y - y_fit) ** 2) / (n - p)
+
+    # Compute the covariance matrix
+    cov = sigma2 * np.linalg.inv(A.T @ A)
+
+    # Standard deviation (uncertainty) of the coefficients
+    uncertainties = np.sqrt(np.diag(cov))
 
     # Expand c to include non-fitted coefficients which are set to zero
     if deg.ndim > 0:
@@ -157,7 +177,7 @@ def fit(vander_f, x, y, deg, coeffs, rcond=None, full=False, w=None):
         warnings.warn(msg, np.RankWarning, stacklevel=2)
 
     if full:
-        return c, [resids, rank, s, rcond]
+        return c, uncertainties, [resids, rank, s, rcond]
     else:
         return c
 
