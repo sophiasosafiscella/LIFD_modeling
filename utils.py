@@ -5,6 +5,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.offsetbox import AnchoredText
 import corner
+import pint
 from pint.residuals import Residuals
 from pypulse.utils import weighted_moments
 import astropy.units as u
@@ -18,10 +19,10 @@ from fit_coefficients import my_legfit
 @dataclass
 class FilteredObservations:
     dmx_ranges: np.ndarray
+    res_object: pint.residuals.Residuals
     xvals: list[np.ndarray]
     freqs: list[np.ndarray]
     resids: list[np.ndarray]
-    resids_errs: list[np.ndarray]
 
 
 def get_dmx_ranges(model, observations):
@@ -79,6 +80,21 @@ def filter_observations(toas, timing_model):
     backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
     broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
 
+    '''
+    res_object = Residuals(broadband_TOAs, timing_model)
+    res_object.lnlikelihood()
+
+    s = res_object.time_resids.to_value(u.s)  # See Eq. (8) in https://iopscience.iop.org/article/10.3847/1538-4357/ad59f7/pdf
+    Ndiag = res_object.get_data_error().to_value(u.s) ** 2
+    U = res_object.model.noise_model_designmatrix(res_object.toas)
+    Phidiag = res_object.model.noise_model_basis_weight(res_object.toas)
+
+    print(s)
+    print(Ndiag)
+    print(U)
+    print(Phidiag)
+    '''
+
     # Find the DMX windows
     dmx_ranges = get_dmx_ranges(timing_model, broadband_TOAs)
 
@@ -89,27 +105,39 @@ def filter_observations(toas, timing_model):
     # Precompute outputs
     valid_dmx_ranges = []
     valid_resids = []
-    valid_resids_errs = []
     valid_xvals = []
     valid_freqs = []
 
+    mjds = broadband_TOAs.get_mjds().value
+    freqs = broadband_TOAs.get_freqs().value
+    valid_toas_mask = np.full(broadband_TOAs.ntoas, False)
+
+    toas_idx: int = 0
     for window in dmx_ranges:
-        obs_in_window = get_dmx_observations(broadband_TOAs, window[0], window[1])
-        freqs = obs_in_window.get_freqs().value
 
-        if (np.any((725 <= freqs) & (freqs <= 916)) and np.any((1156 <= freqs) & (freqs <= 1882))):
+        in_window = (mjds > window[0]) & (mjds < window[1])
+        freqs_in_window = freqs[in_window]
 
-            res_object = Residuals(obs_in_window, timing_model)
-            average = res_object.ecorr_average()
+        has_lower = np.any((725 <= freqs_in_window) & (freqs_in_window <= 916))
+        has_upper = np.any((1156 <= freqs_in_window) & (freqs_in_window <= 1882))
+
+        if has_lower and has_upper:
+            valid_toas_mask |= in_window
+
+            res_object = Residuals(broadband_TOAs[in_window], timing_model)
 
             valid_dmx_ranges.append(window)
             valid_resids.append(res_object.time_resids.to(u.us).value)
-            valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
-            valid_xvals.append(map_domain(freqs))
+#            valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
+            valid_xvals.append(map_domain(freqs_in_window))
             valid_freqs.append(freqs)
 
-    return FilteredObservations(dmx_ranges=np.array(valid_dmx_ranges), xvals=valid_xvals, freqs=valid_freqs,
-                                resids=valid_resids, resids_errs=valid_resids_errs)
+
+    valid_toas = broadband_TOAs[valid_toas_mask]
+    valid_res_object = Residuals(valid_toas, timing_model)
+
+    return FilteredObservations(dmx_ranges=np.array(valid_dmx_ranges), res_object=valid_res_object,
+                                xvals=valid_xvals, freqs=valid_freqs, resids=valid_resids)  # , resids_errs=valid_resids_errs)
 
 
 def make_plot(PSR_name, df):
@@ -303,17 +331,6 @@ def plot_a0a2a4(PSR_name, filtered_obs, a0a2a4):
     DMXR1, DMXR2 = filtered_obs.dmx_ranges[:, 0], filtered_obs.dmx_ranges[:, 1]
     windows_centers = DMXR1 + (DMXR2 - DMXR2) / 2.0
 
-    # Convert a2 to more natural units
-    u_a2 =  unumpy.umatrix(a0a2a4['a2'], a0a2a4['a2_err'])
-    D = ufloat(4.148808e9, 0.000003e9)
-    u_a2_new = u_a2 / D
-    a2_new = np.squeeze(np.asarray(u_a2_new.nominal_values))
-    a2_new_err = np.squeeze(np.asarray(u_a2_new.std_devs))
-
-
-    # Convert a4 to more natural units
-    u_a4 = unumpy.uarray(a0a2a4['a4'], a0a2a4['a4_err'])
-
     sns.set_style("ticks")
     sns.set_context("paper", font_scale=3.0)
     fig, ax = plt.subplots(nrows=3, ncols=1, figsize=(12, 16), sharex=True,
@@ -323,17 +340,37 @@ def plot_a0a2a4(PSR_name, filtered_obs, a0a2a4):
     # Plot and label each subplot
     colors = ['C0', 'C1', 'C2']
     for i in range(3):
-#        ax[i].set_ylabel(f"$a_{2*i}$")
+        ax[i].errorbar(x=windows_centers, y=a0a2a4[f'a{2*i}'], yerr=a0a2a4[f'a{2*i}_err'], color=colors[i], fmt='o')
+        ax[i].set_ylabel(f"$a_{2*i}~[\mu$s]")
         ax[i].grid(True)  # Add grid
         ax[i].label_outer()  # Hide inner x labels and ticks
 
+
+    # Convert a2 to more natural units
+    '''
+    u_a2 = unumpy.umatrix(a0a2a4['a2'], a0a2a4['a2_err'])
+    D = ufloat(4.148808e9, 0.000003e9)
+    u_a2_new = u_a2 / D
+    a2_new = np.squeeze(np.asarray(u_a2_new.nominal_values))
+    a2_new_err = np.squeeze(np.asarray(u_a2_new.std_devs))
+    '''
+    D = 4.148808e9
+    def a2_natural(y):
+        return y / D
+
+    def a2_natural_inverse(y):
+        return y * D
+
+    secax = ax[1].secondary_yaxis('right', functions=(a2_natural, a2_natural_inverse))
+    secax.set_ylabel('$a_2~[\mathrm{pc}~\mathrm{cm}^3]$')
+
     ax[0].errorbar(x=windows_centers, y=a0a2a4['a0'], yerr=a0a2a4[f'a0_err'], color=colors[0], fmt='o')
-    ax[1].errorbar(x=windows_centers, y=a2_new, yerr=a2_new_err, color=colors[1], fmt='o')
+#    ax[1].errorbar(x=windows_centers, y=a2_new, yerr=a2_new_err, color=colors[1], fmt='o')
     ax[2].errorbar(x=windows_centers, y=a0a2a4['a4'], yerr=a0a2a4['a4_err'], color=colors[2], fmt='o')
 
-    ax[0].set_ylabel('$a_0~[\mu \mathrm{s}]$')
-    ax[1].set_ylabel('$a_2~[\mathrm{pc}~\mathrm{cm}^3]$')
-    ax[2].set_ylabel('$a_4~[\mu \mathrm{s}]$')
+#    ax[0].set_ylabel('$a_0~[\mu \mathrm{s}]$')
+#    ax[1].set_ylabel('$a_2~[\mathrm{pc}~\mathrm{cm}^3]$')
+#    ax[2].set_ylabel('$a_4~[\mu \mathrm{s}]$')
     ax[0].set_ylim([-100.0,120.0])
 #    ax[1].set_ylim([0.0,150.0])
 #    ax[2].set_ylim([-80.0,80.0])

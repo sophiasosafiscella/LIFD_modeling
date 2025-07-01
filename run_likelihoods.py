@@ -27,12 +27,22 @@ toas = get_TOAs(timfile, planets=True, ephem=timing_model.EPHEM.value)
 
 # Get the TOAs obtained with GUPPI and that are in DMX windows with observations in both frequency bands
 if os.path.exists(pickle_file):
+    print("Observations already filtered. Now loading them...")
     with open(pickle_file, "rb") as f:
         filtered_obs = pickle.load(f)
 else:
+    print("Filtering observations...")
     filtered_obs = filter_observations(toas, timing_model)
     with open(pickle_file, "wb") as f:
         pickle.dump(filtered_obs, f)
+    print("Done!")
+
+'''
+print(filtered_obs.toas)
+print(filtered_obs.toas.ntoas)
+print(len(np.concatenate(filtered_obs.resids)))
+sys.exit()
+'''
 
 # Initial position in the 3D space of (C1, C3, C5) from where the walkers will start. I got the values from the
 # plots I created previously
@@ -43,11 +53,13 @@ pinit = np.array([342.9607408562299, 3.6656647122634305, -0.21600401837611255])
 if os.path.exists(samples_file):
     samples = np.load(samples_file)
 else:
+    print("MCMC sampling...")
     samples = compute_mcmc(lnprob, (filtered_obs, weight), pinit)
     np.save(samples_file, samples)
+    print("Done!")
 
 # Present the results
-#corner_plot(samples, PSR_name)
+corner_plot(samples, PSR_name)
 
 param_labels = ["$a_1$", "$a_3$", "$a_5$"]
 quantiles = [16, 50, 84]  # For 68% credible interval
