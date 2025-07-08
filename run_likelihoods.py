@@ -6,12 +6,17 @@ import pandas as pd
 from pint.models import get_model
 from pint.toa import get_TOAs
 from utils import filter_observations, corner_plot, find_a0a2a4, plot_a0a2a4
-from mcmc_likelihood import lnprob, compute_mcmc
+from mcmc_likelihood import compute_mcmc, lnprob
 import pickle
 import os.path
 
 # Global parameters
-PSR_name: str = "J1643-1224"
+#PSR_name: str = "J1643-1224"
+PSR_name: str = "J1024-0719"
+#PSR_name: str = "J1903+0327"
+
+print(f"Running {PSR_name}...")
+
 weight: bool = False
 
 # Input files
@@ -37,17 +42,15 @@ else:
         pickle.dump(filtered_obs, f)
     print("Done!")
 
-'''
-print(filtered_obs.toas)
-print(filtered_obs.toas.ntoas)
-print(len(np.concatenate(filtered_obs.resids)))
-sys.exit()
-'''
-
 # Initial position in the 3D space of (C1, C3, C5) from where the walkers will start. I got the values from the
 # plots I created previously
 #pinit = np.array([350.0, 5.0, 0.0])
-pinit = np.array([342.9607408562299, 3.6656647122634305, -0.21600401837611255])
+if PSR_name == "J1643-1224":
+    pinit = np.array([342.9607408562299, 3.6656647122634305, -0.21600401837611255])
+elif PSR_name == "J1024-0719":
+    pinit = np.array([-6226.9, -0.6, -6.0])
+elif PSR_name == "J1903+0327":
+    pinit = np.array([-84.1345, 35.3294, -16.9185])
 
 # Run the MCMC sampler
 if os.path.exists(samples_file):
@@ -75,6 +78,8 @@ for i in range(samples.shape[1]):
 #    print(f"{param_labels[i]} = {median:.4f} (+{plus:.4f}/-{minus:.4f})")
 
 # For the median values of a1, a3, a5, find the fitted valus of a0, a2, a4 in each DMX window
+
+print(a1a3a5)
 if os.path.exists(a0a2a4_file):
     a0a2a4 = pd.read_pickle(a0a2a4_file)
 else:

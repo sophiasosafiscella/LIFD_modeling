@@ -1,6 +1,7 @@
-import warnings
 import numpy as np
+from numba import njit
 
+#@njit
 def leg_vander_ordinate(x, y, deg, coeffs):
     """Pseudo-Vandermonde matrix of given degree.
 
@@ -39,17 +40,14 @@ def leg_vander_ordinate(x, y, deg, coeffs):
         the converted `x`.
 
     """
-    ideg = int(deg)
+    ideg = deg.item()
     if ideg < 0:
         raise ValueError("deg must be non-negative")
 
-    x = np.array(x, copy=False, ndmin=1) + 0.0
+    x = np.asarray(x) + 0.0
     dims = (ideg + 1,) + x.shape   # Row = fitted parameter, column = observation
     dtyp = x.dtype
     v = np.empty(dims, dtype=dtyp)
-
-    new_dims = (3,) + x.shape   # Row = fitted parameter, column = observation
-    fitted_v = np.empty(new_dims, dtype=dtyp)   # Array to store P0, P2, P4
 
     # Use forward recursion to generate the entries. This is not as accurate
     # as reverse recursion in this application but it is more efficient.
@@ -62,15 +60,69 @@ def leg_vander_ordinate(x, y, deg, coeffs):
             v[i] = (v[i-1]*x*(2*i - 1) - v[i-2]*(i - 1))/i
 
     # We will fit the coefficients corresponding to i = 0, 2, 4, (epoch-dependent)
-    fitted_v = v[[0, 2, 4], :]
+    fitted_v = v[np.array([0, 2, 4]), :]
 
     # For all the terms OTHER than i = 0, 2, 4, move that term into the independent part of the least squares a @ x = b
-    idx_IN_columns = [i for i in range(np.shape(v)[0]) if i not in [0, 2, 4]]
-    not_fitted_v = v[idx_IN_columns, :]
+    idx_not_fitted = np.array([i for i in range(np.shape(v)[0]) if i not in [0, 2, 4]])
+    not_fitted_v = v[idx_not_fitted, :]
 
-    b = y - np.matmul(coeffs, not_fitted_v)
+    b = y - coeffs @ not_fitted_v
 
-    return np.moveaxis(fitted_v, 0, -1), b
+    return fitted_v.T, b
+
+#@njit
+def fit_minimal(vander_f, x, y, deg, coeffs):
+    """
+    Helper function used to implement the ``<type>fit`` functions.
+
+    Parameters
+    ----------
+    vander_f : function(array_like, int) -> ndarray
+        The 1d vander function, such as ``polyvander``
+    c1, c2
+        See the ``<type>fit`` functions for more detail
+    """
+
+    x = np.asarray(x) + 0.0
+    y = np.asarray(y) + 0.0
+    deg = np.asarray(deg)
+
+    if deg.ndim == 0:
+        lmax = deg
+        van, ord = vander_f(x, y, deg, coeffs)
+    else:
+        print("deg.nim > 0")
+#        deg = np.sort(deg)
+#        lmax = deg[-1]
+#        order = len(deg)
+#        van = vander_f(x, y, deg, coeffs)[:, deg]
+
+    # set up the least squares matrices in transposed form
+    lhs = van.T
+    rhs = ord.T
+
+    # set rcond
+    rcond = len(x)*np.finfo(x.dtype).eps
+
+    # Determine the norms of the design matrix columns.
+    if lhs.dtype.kind == "c":  # 'c' means complex in NumPy dtype kinds
+        scl = np.sqrt((np.square(lhs.real) + np.square(lhs.imag)).sum(1))
+    else:
+        scl = np.sqrt(np.square(lhs).sum(1))
+    scl[scl == 0] = 1
+
+    # Solve the least squares problem.
+    A = lhs.T/scl
+    c, resids, rank, s = np.linalg.lstsq(A, rhs.T, rcond)
+    c = (c.T/scl).T
+
+    return c
+
+#@njit
+def my_legfit_minimal(x, y, deg, coeffs):
+
+    return fit_minimal(leg_vander_ordinate, x, y, deg, coeffs)
+
 
 
 def fit(vander_f, x, y, deg, coeffs, rcond=None, full=False, w=None):
@@ -172,9 +224,9 @@ def fit(vander_f, x, y, deg, coeffs, rcond=None, full=False, w=None):
         c = cc
 
     # warn on rank reduction
-    if rank != order and not full:
-        msg = "The fit may be poorly conditioned"
-        warnings.warn(msg, np.RankWarning, stacklevel=2)
+#    if rank != order and not full:
+#        msg = "The fit may be poorly conditioned"
+#        warnings.warn(msg, np.RankWarning, stacklevel=2)
 
     if full:
         return c, uncertainties, [resids, rank, s, rcond]
@@ -182,7 +234,7 @@ def fit(vander_f, x, y, deg, coeffs, rcond=None, full=False, w=None):
         return c
 
 
-def my_legfit(x, y, deg, coeffs, rcond=None, full=False, w=None):
+def my_legfit_full(x, y, deg, coeffs, rcond=None, full=True, w=None):
     """
     Least squares fit of Legendre series to data.
 

@@ -4,6 +4,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.offsetbox import AnchoredText
+from scipy.linalg import cho_factor, cho_solve
 import corner
 import pint
 from pint.residuals import Residuals
@@ -13,13 +14,18 @@ from dataclasses import dataclass
 
 from uncertainties import unumpy, ufloat
 
-from fit_coefficients import my_legfit
+from fit_coefficients import my_legfit_full
 
 
 @dataclass
 class FilteredObservations:
-    dmx_ranges: np.ndarray
-    res_object: pint.residuals.Residuals
+    PSR_name: str
+    dmx_ranges: np.matrix
+    Cinv: np.matrix
+    logdet_C: float
+    Ndiag: np.array
+    U: np.matrix
+    Sigma_cf: np.matrix
     xvals: list[np.ndarray]
     freqs: list[np.ndarray]
     resids: list[np.ndarray]
@@ -74,70 +80,72 @@ def map_domain(frequencies):
 
 
 def filter_observations(toas, timing_model):
-    """Given TOAs, extract broadband observations and select DMX windows with both frequency bands."""
+        """Given TOAs, extract broadband observations and select DMX windows with both frequency bands."""
 
-    # Filter for GUPPI backend only
-    backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
-    broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
+        # Filter for GUPPI backend only
+        #backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
+        #broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
+        broadband_TOAs = toas
+        # Find the DMX windows
+        dmx_ranges = get_dmx_ranges(timing_model, broadband_TOAs)
 
-    '''
-    res_object = Residuals(broadband_TOAs, timing_model)
-    res_object.lnlikelihood()
+        # Get rid of the DMX and FD parameters to create the simplified timing model
+        timing_model.remove_component("DispersionDMX")
+        timing_model.remove_component("FD")
 
-    s = res_object.time_resids.to_value(u.s)  # See Eq. (8) in https://iopscience.iop.org/article/10.3847/1538-4357/ad59f7/pdf
-    Ndiag = res_object.get_data_error().to_value(u.s) ** 2
-    U = res_object.model.noise_model_designmatrix(res_object.toas)
-    Phidiag = res_object.model.noise_model_basis_weight(res_object.toas)
+        # Precompute outputs
+        valid_dmx_ranges = []
+        valid_resids = []
+        valid_xvals = []
+        valid_freqs = []
 
-    print(s)
-    print(Ndiag)
-    print(U)
-    print(Phidiag)
-    '''
+        mjds = broadband_TOAs.get_mjds().value
+        freqs = broadband_TOAs.get_freqs().value
+        valid_toas_mask = np.full(broadband_TOAs.ntoas, False)
 
-    # Find the DMX windows
-    dmx_ranges = get_dmx_ranges(timing_model, broadband_TOAs)
+        for window in dmx_ranges:
 
-    # Get rid of the DMX and FD parameters to create the simplified timing model
-    timing_model.remove_component("DispersionDMX")
-    timing_model.remove_component("FD")
+            in_window = (mjds > window[0]) & (mjds < window[1])
+            freqs_in_window = freqs[in_window]
 
-    # Precompute outputs
-    valid_dmx_ranges = []
-    valid_resids = []
-    valid_xvals = []
-    valid_freqs = []
+#            has_lower = np.any((725 <= freqs_in_window) & (freqs_in_window <= 916))
+#            has_upper = np.any((1156 <= freqs_in_window) & (freqs_in_window <= 1882))
 
-    mjds = broadband_TOAs.get_mjds().value
-    freqs = broadband_TOAs.get_freqs().value
-    valid_toas_mask = np.full(broadband_TOAs.ntoas, False)
+            has_lower, has_upper = True, True
+            if has_lower and has_upper:
+                valid_toas_mask |= in_window
 
-    toas_idx: int = 0
-    for window in dmx_ranges:
+                res_object = Residuals(broadband_TOAs[in_window], timing_model)
 
-        in_window = (mjds > window[0]) & (mjds < window[1])
-        freqs_in_window = freqs[in_window]
+                valid_dmx_ranges.append(window)
+                valid_resids.append(res_object.time_resids.to(u.us).value)
+    #            valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
+                valid_xvals.append(map_domain(freqs_in_window))
+                valid_freqs.append(freqs)
 
-        has_lower = np.any((725 <= freqs_in_window) & (freqs_in_window <= 916))
-        has_upper = np.any((1156 <= freqs_in_window) & (freqs_in_window <= 1882))
+        valid_toas = broadband_TOAs[valid_toas_mask]
+        valid_res_object = Residuals(valid_toas, timing_model)
 
-        if has_lower and has_upper:
-            valid_toas_mask |= in_window
+        Ndiag = valid_res_object.model.scaled_toa_uncertainty(valid_toas).to_value(u.s) ** 2
+        U = valid_res_object.model.noise_model_designmatrix(valid_res_object.toas)
+        Phidiag = valid_res_object.model.noise_model_basis_weight(valid_res_object.toas)
 
-            res_object = Residuals(broadband_TOAs[in_window], timing_model)
+        Ninv = np.diag(1.0/ Ndiag)
+        Ninv_U = np.diag(1.0 / Ndiag) @ U
+        Sigma = np.diag(1.0 / Phidiag) + (U.T / Ndiag) @ U
+        Sigma_cf = cho_factor(Sigma)
 
-            valid_dmx_ranges.append(window)
-            valid_resids.append(res_object.time_resids.to(u.us).value)
-#            valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
-            valid_xvals.append(map_domain(freqs_in_window))
-            valid_freqs.append(freqs)
+        Cinv = Ninv - Ninv_U @ cho_solve(Sigma_cf, Ninv_U.T)
 
+        logdet_N = np.sum(np.log(Ndiag))
+        logdet_Phi = np.sum(np.log(Phidiag))
+        _, logdet_Sigma = np.linalg.slogdet(Sigma.astype(float))
 
-    valid_toas = broadband_TOAs[valid_toas_mask]
-    valid_res_object = Residuals(valid_toas, timing_model)
+        logdet_C = logdet_N + logdet_Phi + logdet_Sigma
 
-    return FilteredObservations(dmx_ranges=np.array(valid_dmx_ranges), res_object=valid_res_object,
-                                xvals=valid_xvals, freqs=valid_freqs, resids=valid_resids)  # , resids_errs=valid_resids_errs)
+        return FilteredObservations(PSR_name=timing_model.PSR.value, dmx_ranges=np.array(valid_dmx_ranges), Cinv=Cinv, logdet_C=logdet_C,
+                                    Ndiag=Ndiag, U=U, Sigma_cf=Sigma_cf,
+                                    xvals=valid_xvals, freqs=valid_freqs, resids=valid_resids)  # , resids_errs=valid_resids_errs)
 
 
 def make_plot(PSR_name, df):
@@ -286,9 +294,11 @@ def find_a0a2a4(PSR_name, filtered_obs, a1a3a5, plot=False):
 
         # Calculate the coefficients for the unscaled and unshifted Legendre basis polynomials
         c1c3c5 = leg.poly2leg([0.0, a1a3a5[0], 0.0, a1a3a5[1], 0.0, a1a3a5[2]])[[1, 3, 5]]
-        c0c2c4, c0c2c4_errs, _ = my_legfit(x=x, y=y.astype(np.float64), deg=5, coeffs=c1c3c5, full=True)
+        c0c2c4, c0c2c4_errs, _ = my_legfit_full(x=x, y=y.astype(np.float64), deg=5, coeffs=c1c3c5)
 
         # Assemble the Legendre series
+        print(n)
+        print(c0c2c4)
         leg_coeffs = np.array([c0c2c4[0], c1c3c5[0], c0c2c4[1], c1c3c5[1], c0c2c4[2], c1c3c5[2]])
         pfit = leg.Legendre(leg_coeffs)
 

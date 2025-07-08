@@ -1,5 +1,4 @@
 import numpy as np
-
 import numpy.polynomial.legendre as leg
 import pandas as pd
 import seaborn as sns
@@ -11,8 +10,10 @@ from numpy.polynomial.polynomial import Polynomial
 from pint.models import get_model
 from pint.residuals import Residuals
 from pint.toa import get_TOAs
-from utils import get_dmx_ranges, get_dmx_observations, epoch_scrunch, filter_observations, map_domain, make_plot
-from fit_coefficients import my_legfit
+import pint
+pint.logging.setup(level="ERROR")
+from utils import epoch_scrunch, filter_observations,  make_plot
+from fit_coefficients import my_legfit_full
 import astropy.units as u
 from glob import glob
 import os
@@ -20,18 +21,18 @@ import pickle
 import sys
 
 
-def find_dispersion_coefficients(psr_name:str, fixed_coeffs:bool=True, plot:bool=True):
+def find_dispersion_coefficients(psr_name:str, fixed_coeffs:bool=True, plot:bool=False):
 
     # Input files
     parfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.0.1/narrowband/par/{psr_name}_PINT_*.nb.par")[0]
     timfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.0.1/narrowband/tim/{psr_name}_PINT_*.nb.tim")[0]
-    pickle_file: str = f"./results/{PSR_name}_filtered_obs.pkl"
+    pickle_file: str = f"./results/{PSR_name}/{PSR_name}_filtered_obs.pkl"
 
     # Load the timing model and TOAs
     timing_model = get_model(parfile)  # Ecliptical coordiantes
     toas = get_TOAs(timfile, planets=True, ephem=timing_model.EPHEM.value)
 
-    if False:
+    if plot:
         original_residuals = Residuals(GUPPI_toas, timing_model).time_resids.to(u.us).value
         epochs, retval, retvalerrs = epoch_scrunch(GUPPI_toas.get_mjds().value, data=original_residuals, errors=GUPPI_toas.get_errors().to(u.us).value, weighted=True)
 
@@ -67,10 +68,9 @@ def find_dispersion_coefficients(psr_name:str, fixed_coeffs:bool=True, plot:bool
         #  Coefficients of the equivalent polynomial (relative to the “standard” basis) ordered from lowest to highest degree.
         coeffs_arr[n, :] = leg.leg2poly(leg_pfit_coef)
 
-        new_x, new_y = zip(*sorted(zip(x, y)))
-        new_x, new_y = np.array(new_x), np.array(new_y)
-
         if plot:
+            new_x, new_y = zip(*sorted(zip(x, y)))
+            new_x, new_y = np.array(new_x), np.array(new_y)
 
             at = AnchoredText(f"Power series coefficients: \n $C_0$ = {coeffs_arr[n, 0]} \n $C_1$ = {coeffs_arr[n, 1]} \n $C_2$ = {coeffs_arr[n, 2]} \n $C_3$ = {coeffs_arr[n, 3]} \n $C_4$ = {coeffs_arr[n, 4]} \n $C_5$ = {coeffs_arr[n, 5]}",
                               prop=dict(size=10), frameon=True, loc='upper left')
@@ -112,12 +112,14 @@ def find_dispersion_coefficients(psr_name:str, fixed_coeffs:bool=True, plot:bool
 
 if __name__ == "__main__":
 
-    PSR_name: str = "J1643-1224"
-    if not os.path.exists('./' + PSR_name + '_results.csv'):
+#    PSR_name: str = "J1643-1224"
+    PSR_name: str = "J1024-0719"
+#    PSR_name: str = "J1903+0327"
+    if not os.path.exists('./results/' + PSR_name + '_results.csv'):
         df = find_dispersion_coefficients(PSR_name)
-        df.to_csv('./' + PSR_name + '_results.csv')
+        df.to_csv('./results/' + PSR_name + '_results.csv')
     else:
-        df = pd.read_csv('./' + PSR_name + '_results.csv')
+        df = pd.read_csv('./results/' + PSR_name + '_results.csv')
 
     make_plot(PSR_name, df)
 
