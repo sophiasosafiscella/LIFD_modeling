@@ -79,7 +79,6 @@ for i in range(samples.shape[1]):
 
 # For the median values of a1, a3, a5, find the fitted valus of a0, a2, a4 in each DMX window
 
-print(a1a3a5)
 if os.path.exists(a0a2a4_file):
     a0a2a4 = pd.read_pickle(a0a2a4_file)
 else:

@@ -252,7 +252,7 @@ def corner_plot(samples, PSR_name):
         contour_kwargs={"colors": ["black"]}
     )
 
-#    fig.savefig(f"./results/{PSR_name}_corner_plot.png", dpi=300)
+    fig.savefig(f"./results/{PSR_name}_corner_plot.png", dpi=300)
     plt.show()
 
 def my_leg2poly(u_leg_coeffs):
