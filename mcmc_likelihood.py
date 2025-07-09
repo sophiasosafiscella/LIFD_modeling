@@ -16,7 +16,7 @@ def log_prior(theta, psr_name):
         if 250 < a1 < 450 and -30.0 < a3 < 30.0 and -40.0 < a5 < 40.0:
             return 0.0
     elif psr_name == "J1024-0719":
-        if -7000 < a1 < -5000 and -500.0 < a3 < 500.0 and -200.0 < a5 < 200.0:
+        if -7000 < a1 < -5000 and -1000.0 < a3 < 1000.0 and -400.0 < a5 < 400.0:
             return 0.0
     elif psr_name == "J1903+0327":
         if -1000 < a1 < 1000 and -1000.0 < a3 < 1000.0 and -1000.0 < a5 < 1000.0:
@@ -90,7 +90,7 @@ def lnprob(theta, filtered_obs, weight=False):
 
 
 # http://jakevdp.github.io/blog/2015/08/07/frequentism-and-bayesianism-5-model-selection/
-def compute_mcmc(lnprob, args, pinit, nwalkers=10, niter=10000):
+def compute_mcmc(lnprob, args, pinit, nwalkers=10, niter=20000):
 
     # Number of variables we're MCMCing over
     ndim = len(pinit)
@@ -106,7 +106,7 @@ def compute_mcmc(lnprob, args, pinit, nwalkers=10, niter=10000):
     # Burn the ends of the samples chains
     if niter <= 50000:
 #        burn = int(niter/10)
-        burn = int(nwalkers / 5)
+        burn = int(niter / 5)
     if burn > 5000:
         burn = 5000
 
