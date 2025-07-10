@@ -307,8 +307,6 @@ def find_a0a2a4(PSR_name, filtered_obs, a1a3a5, plot=False):
         c0c2c4, c0c2c4_errs, _ = my_legfit_full(x=x, y=y.astype(np.float64), deg=5, coeffs=c1c3c5)
 
         # Assemble the Legendre series
-        print(n)
-        print(c0c2c4)
         leg_coeffs = np.array([c0c2c4[0], c1c3c5[0], c0c2c4[1], c1c3c5[1], c0c2c4[2], c1c3c5[2]])
         pfit = leg.Legendre(leg_coeffs)
 
