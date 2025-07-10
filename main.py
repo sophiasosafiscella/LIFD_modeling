@@ -12,7 +12,7 @@ from pint.residuals import Residuals
 from pint.toa import get_TOAs
 import pint
 pint.logging.setup(level="ERROR")
-from utils import epoch_scrunch, filter_observations,  make_plot
+from utils import epoch_scrunch, get_data,  make_plot
 from fit_coefficients import my_legfit_full
 import astropy.units as u
 from glob import glob
@@ -48,7 +48,7 @@ def find_dispersion_coefficients(psr_name:str, fixed_coeffs:bool=True, plot:bool
         with open(pickle_file, "rb") as f:
             filtered_obs = pickle.load(f)
     else:
-        filtered_obs = filter_observations(toas, timing_model)
+        filtered_obs = get_data(toas, timing_model)
         with open(pickle_file, "wb") as f:
             pickle.dump(filtered_obs, f)
 
