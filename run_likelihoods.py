@@ -8,7 +8,6 @@ from pint.models import get_model
 from pint.toa import get_TOAs
 from utils import get_data, corner_plot, find_a0a2a4, plot_a0a2a4, reverse_mapping, get_FD_curve_values
 from mcmc_likelihood import compute_mcmc, lnprob, load_pinit
-from FDcurves import getvalues
 from pypulse.par import Par
 import pickle
 import os.path
@@ -91,7 +90,7 @@ p = Par(parfile, numwrap=float)
 DM = p.getDM()
 
 # Frequencies and delays for the model as it is
-fs, ys = getvalues(p, freqs, DM0=DM)
+fs, ys = get_FD_curve_values(p, freqs, DM0=DM)
 
 ax.plot(fs, ys, 'k', label="NG15's FD model")
 F1, F2 = freqs[0], freqs[-1]
