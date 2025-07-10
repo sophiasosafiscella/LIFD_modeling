@@ -6,7 +6,7 @@ from glob import glob
 import pandas as pd
 from pint.models import get_model
 from pint.toa import get_TOAs
-from utils import get_data, corner_plot, find_a0a2a4, plot_a0a2a4, reverse_mapping
+from utils import get_data, corner_plot, find_a0a2a4, plot_a0a2a4, reverse_mapping, load_pinit
 from mcmc_likelihood import compute_mcmc, lnprob
 import pickle
 import os.path
@@ -47,13 +47,7 @@ else:
 
 # Initial position in the 3D space of (C1, C3, C5) from where the walkers will start. I got the values from the
 # plots I created previously
-#pinit = np.array([350.0, 5.0, 0.0])
-if PSR_name == "J1643-1224":
-    pinit = np.array([342.9607408562299, 3.6656647122634305, -0.21600401837611255])
-elif PSR_name == "J1024-0719":
-    pinit = np.array([-6226.9, -0.6, -6.0])
-elif PSR_name == "J1903+0327":
-    pinit = np.array([-84.1345, 35.3294, -16.9185])
+pinit = load_pinit(psr_name)
 
 # Run the MCMC sampler
 if os.path.exists(samples_file):

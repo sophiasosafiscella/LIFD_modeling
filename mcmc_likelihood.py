@@ -10,6 +10,16 @@ pint.logging.setup(level="ERROR")
 from fit_coefficients import my_legfit_minimal
 import sys
 
+def load_pinit(psr_name):
+
+    if psr_name == "J1643-1224":
+        return np.array([342.9607408562299, 3.6656647122634305, -0.21600401837611255])
+    elif psr_name == "J1024-0719":
+        return np.array([-6226.9, -0.6, -6.0])
+    elif psr_name == "J1903+0327":
+        return np.array([-84.1345, 35.3294, -16.9185])
+
+
 def log_prior(theta, psr_name):
     a1, a3, a5 = theta  # These are priors on the MONIMIAl coefficients, not on the LEGENDRE coefficients
     if psr_name == "J1643-1224":
