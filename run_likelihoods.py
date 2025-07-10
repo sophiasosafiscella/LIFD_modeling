@@ -80,6 +80,7 @@ a1a3a5 = np.median(samples, axis=0)                                  # Calculate
 poly = Polynomial([0.0, a1a3a5[0], 0.0, a1a3a5[1], 0.0, a1a3a5[2]])  # Construct the power series polynomial
 xvals = np.arange(-1.0, 1.0, 0.001)           # Create values of the normalized inverse frequency between -1 and 1
 ys = poly(xvals)                              # Evaluate the power series polynomial at those inverse frequencies
+ys -= np.mean(ys)
 
 # Transform the inverse frequencies to normal frequencies (in GHz)
 freqs = reverse_mapping(xvals, data_obj.max_inv_freq, data_obj.min_inv_freq)
@@ -90,9 +91,9 @@ p = Par(parfile, numwrap=float)
 DM = p.getDM()
 
 # Frequencies and delays for the model as it is
-fs, ys = get_FD_curve_values(p, freqs, DM0=DM)
+fs, ys_FD = get_FD_curve_values(p, freqs, DM0=DM)
 
-ax.plot(fs, ys, 'k', label="NG15's FD model")
+ax.plot(fs, ys_FD, 'k', label="NG15's FD model")
 F1, F2 = freqs[0], freqs[-1]
 Fdiff = F2 - F1
 ax.set_xlim(F1 - 0.1 * Fdiff, F2 + 0.1 * Fdiff)
