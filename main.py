@@ -33,8 +33,8 @@ def find_dispersion_coefficients(psr_name:str, fixed_coeffs:bool=True, plot:bool
     toas = get_TOAs(timfile, planets=True, ephem=timing_model.EPHEM.value)
 
     if plot:
-        original_residuals = Residuals(GUPPI_toas, timing_model).time_resids.to(u.us).value
-        epochs, retval, retvalerrs = epoch_scrunch(GUPPI_toas.get_mjds().value, data=original_residuals, errors=GUPPI_toas.get_errors().to(u.us).value, weighted=True)
+        original_residuals = Residuals(toas, timing_model).time_resids.to(u.us).value
+        epochs, retval, retvalerrs = epoch_scrunch(toas.get_mjds().value, data=original_residuals, errors=toas.get_errors().to(u.us).value, weighted=True)
 
         sns.set_style('darkgrid')
         plt.errorbar(epochs, retval, yerr=retvalerrs, fmt='x')

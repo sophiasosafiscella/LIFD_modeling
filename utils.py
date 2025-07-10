@@ -29,7 +29,6 @@ class DataObject:
     U: np.matrix
     Sigma_cf: np.matrix
     xvals: list[np.ndarray]
-    freqs: list[np.ndarray]
     resids: list[np.ndarray]
 
 
@@ -74,20 +73,19 @@ def get_dmx_observations(observations, low_mjd, high_mjd):
 
 def map_domain(frequencies, max_inv_freq, min_inv_freq):
 
-    lambdas = np.power(frequencies, -1.0)  # Inverse of the frequency
+    lambdas = np.power(frequencies, -1.0)                                # Inverse of the frequencies
     x_aux_values = (lambdas - min_inv_freq)/(max_inv_freq-min_inv_freq)  # Between 0 and 1
-    x_values = np.subtract(np.multiply(x_aux_values, 2.0), 1.0)                      # Between -1 and 1
+    x_values = np.subtract(np.multiply(x_aux_values, 2.0), 1.0)          # Between -1 and 1
 
     return x_values
 
-def reverse_mapping(xmin, xmax):
+def reverse_mapping(x_values, max_inv_freq, min_inv_freq):
 
-    x_values = np.arange(xmin, xmax, 0.001)
-    aux = np.divide(np.add(x_values, 1.0), 2.0)
+    aux = np.divide(np.add(x_values, 1.0), 2.0)                 # Between 0 and 1
+    lambdas = aux * (max_inv_freq-min_inv_freq) + min_inv_freq  # Inverse of the frequencies, in GHz^(-1)
+    frequencies = np.power(lambdas, -1.0)                       # In GHz
 
-    print(np.amax(aux), np.amin(aux))
-
-    return
+    return frequencies
 
 
 def get_data(toas, timing_model):
@@ -108,12 +106,11 @@ def get_data(toas, timing_model):
         valid_dmx_ranges = []
         valid_resids = []
         valid_xvals = []
-        valid_freqs = []
 
         mjds = broadband_TOAs.get_mjds().value
         freqs_GHz = broadband_TOAs.get_freqs().to(u.GHz).value
-        inv_freqs = np.power(freqs_GHz, -1.0)
-        max_inv_freq, min_inv_freq = np.amax(inv_freqs), np.amin(inv_freqs)
+        max_freq, min_freq = np.amax(freqs_GHz), np.amin(freqs_GHz)      # Maximum and minimum frequencies
+        max_inv_freq, min_inv_freq = max_freq ** (-1), min_freq ** (-1)  # Inverse of max and min frequencies
         valid_toas_mask = np.full(broadband_TOAs.ntoas, False)
 
         for window in dmx_ranges:
@@ -134,7 +131,6 @@ def get_data(toas, timing_model):
                 valid_resids.append(res_object.time_resids.to(u.us).value)
     #            valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
                 valid_xvals.append(map_domain(freqs_in_window, max_inv_freq, min_inv_freq))
-                valid_freqs.append(freqs_GHz)
 
         valid_toas = broadband_TOAs[valid_toas_mask]
         valid_res_object = Residuals(valid_toas, timing_model)
@@ -159,7 +155,7 @@ def get_data(toas, timing_model):
         return DataObject(PSR_name=timing_model.PSR.value, dmx_ranges=np.array(valid_dmx_ranges),
                         max_inv_freq=max_inv_freq, min_inv_freq=min_inv_freq,
                         Cinv=Cinv, logdet_C=logdet_C, Ndiag=Ndiag, U=U, Sigma_cf=Sigma_cf,
-                        xvals=valid_xvals, freqs=valid_freqs, resids=valid_resids)  # , resids_errs=valid_resids_errs)
+                        xvals=valid_xvals, resids=valid_resids)  # , resids_errs=valid_resids_errs)
 
 
 def make_plot(PSR_name, df):
@@ -407,3 +403,27 @@ def plot_a0a2a4(PSR_name, filtered_obs, a0a2a4):
     plt.show()
 
     return
+
+
+def get_FD_curve_values(p, freqs, DM0=0.0):
+
+    FDfunc = p.getFDfunc()
+    if FDfunc is None:
+        return
+
+    DM = p.getDM()
+    ts, dmx, errs, R1s, R2s, _, _ = p.getDMX(full_output=True)
+    F1s = np.amin(freqs)
+    F2s = np.amax(freqs)
+    F1 = np.min(F1s)/1000.0 #in GHz
+    F2 = np.max(F2s)/1000.0
+
+    fs = np.arange(F1, F2, 0.001)
+
+#    shift = -K*((DM+dmx[0])-DM0)/fs**2
+    shift = 0.0
+
+    ys = FDfunc(fs) + shift
+    ys -= np.mean(ys)
+
+    return fs, ys

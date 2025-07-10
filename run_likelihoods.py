@@ -6,8 +6,10 @@ from glob import glob
 import pandas as pd
 from pint.models import get_model
 from pint.toa import get_TOAs
-from utils import get_data, corner_plot, find_a0a2a4, plot_a0a2a4, reverse_mapping, load_pinit
-from mcmc_likelihood import compute_mcmc, lnprob
+from utils import get_data, corner_plot, find_a0a2a4, plot_a0a2a4, reverse_mapping, get_FD_curve_values
+from mcmc_likelihood import compute_mcmc, lnprob, load_pinit
+from FDcurves import getvalues
+from pypulse.par import Par
 import pickle
 import os.path
 import sys
@@ -26,7 +28,6 @@ parfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.0.1/narrowband/par/{PSR_nam
 timfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.0.1/narrowband/tim/{PSR_name}_PINT_*.nb.tim")[0]
 pickle_file: str = f"./results/{PSR_name}/{PSR_name}_data_obj.pkl"
 samples_file: str = f"./results/{PSR_name}/{PSR_name}_samples.npy"
-a1a3a5_file: str = f"./results/{PSR_name}/{PSR_name}_a1a3a5.npy"
 a0a2a4_file: str = f"./results/{PSR_name}/{PSR_name}_a0a2a4.pkl"
 
 # Load the timing model and TOAs
@@ -47,7 +48,7 @@ else:
 
 # Initial position in the 3D space of (C1, C3, C5) from where the walkers will start. I got the values from the
 # plots I created previously
-pinit = load_pinit(psr_name)
+pinit = load_pinit(PSR_name)
 
 # Run the MCMC sampler
 if os.path.exists(samples_file):
@@ -65,35 +66,45 @@ param_labels = ["$a_1$", "$a_3$", "$a_5$"]
 quantiles = [16, 50, 84]  # For 68% credible interval
 
 # Find the medians of a1, a3, a5
-a1a3a5 = np.empty(3)
+#a1a3a5 = np.empty(3)
 for i in range(samples.shape[1]):
     q16, q50, q84 = np.percentile(samples[:, i], quantiles)
-    a1a3a5[i] = q50
+#    a1a3a5[i] = q50
     median = q50
     minus = q50 - q16
     plus = q84 - q50
 #    print(f"{param_labels[i]} = {median:.4f} (+{plus:.4f}/-{minus:.4f})")
 
-'''
-# Extract the medians
-if os.path.exists(a1a3a5_file):
-    a1a3a5_medians = pd.read_pickle(a1a3a5_file)
-else:
-    a1a3a5 = np.median(samples, axis=0)                                  # Calculate the maximum posterior coefficients
-    poly = Polynomial([0.0, a1a3a5[0], 0.0, a1a3a5[1], 0.0, a1a3a5[2]])  # Construct the power series polynomial
-    freqs = reverse_mapping(xmin=-1.0, xmax=1.0)
-    sys.exit()
-    # Evaluate it at the given frequencies
-    #all_x_vals = np.concatenate(data_obj.xvals)
-    all_x_vals = data_obj.xvals[0]
-    new_ys = poly(all_x_vals)
+# Plot the FD curves
+fig, ax = plt.subplots()
+a1a3a5 = np.median(samples, axis=0)                                  # Calculate the maximum posterior coefficients
+poly = Polynomial([0.0, a1a3a5[0], 0.0, a1a3a5[1], 0.0, a1a3a5[2]])  # Construct the power series polynomial
+xvals = np.arange(-1.0, 1.0, 0.001)           # Create values of the normalized inverse frequency between -1 and 1
+ys = poly(xvals)                              # Evaluate the power series polynomial at those inverse frequencies
 
-    plt.plot(all_x_vals, new_ys)
-    plt.tight_layout()
-    plt.show()
-    sys.exit()
-#    np.save(a1a3a5_file, a1a3a5)
-'''
+# Transform the inverse frequencies to normal frequencies (in GHz)
+freqs = reverse_mapping(xvals, data_obj.max_inv_freq, data_obj.min_inv_freq)
+ax.plot(freqs, ys, label="$a_1 x + a_3 x^3 + a_5 x^5$")
+
+# FD model
+p = Par(parfile, numwrap=float)
+DM = p.getDM()
+
+# Frequencies and delays for the model as it is
+fs, ys = getvalues(p, freqs, DM0=DM)
+
+ax.plot(fs, ys, 'k', label="NG15's FD model")
+F1, F2 = freqs[0], freqs[-1]
+Fdiff = F2 - F1
+ax.set_xlim(F1 - 0.1 * Fdiff, F2 + 0.1 * Fdiff)
+
+ax.set_xlabel(r"Frequency~(GHz)")
+ax.set_ylabel(r"Residual~($\mu$s)")
+
+plt.legend()
+plt.tight_layout()
+plt.savefig(f"./results/{PSR_name}/{PSR_name}_FD_curve.png")
+plt.show()
 
 # For the median values of a1, a3, a5, find the fitted valus of a0, a2, a4 in each DMX window
 if os.path.exists(a0a2a4_file):
