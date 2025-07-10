@@ -18,9 +18,11 @@ from fit_coefficients import my_legfit_full
 
 
 @dataclass
-class FilteredObservations:
+class DataObject:
     PSR_name: str
     dmx_ranges: np.matrix
+    max_inv_freq: float
+    min_inv_freq: float
     Cinv: np.matrix
     logdet_C: float
     Ndiag: np.array
@@ -70,22 +72,31 @@ def get_dmx_observations(observations, low_mjd, high_mjd):
     return observations[mask]
 
 
-def map_domain(frequencies):
+def map_domain(frequencies, max_inv_freq, min_inv_freq):
 
     lambdas = np.power(frequencies, -1.0)  # Inverse of the frequency
-    x_aux_values = (lambdas - np.amin(lambdas))/(np.amax(lambdas)-np.amin(lambdas))  # Between 0 and 1
+    x_aux_values = (lambdas - min_inv_freq)/(max_inv_freq-min_inv_freq)  # Between 0 and 1
     x_values = np.subtract(np.multiply(x_aux_values, 2.0), 1.0)                      # Between -1 and 1
 
     return x_values
 
+def reverse_mapping(xmin, xmax):
 
-def filter_observations(toas, timing_model):
+    x_values = np.arange(xmin, xmax, 0.001)
+    aux = np.divide(np.add(x_values, 1.0), 2.0)
+
+    print(np.amax(aux), np.amin(aux))
+
+    return
+
+
+def get_data(toas, timing_model):
         """Given TOAs, extract broadband observations and select DMX windows with both frequency bands."""
 
         # Filter for GUPPI backend only
-        #backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
-        #broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
-        broadband_TOAs = toas
+        backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
+        broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
+        #broadband_TOAs = toas
         # Find the DMX windows
         dmx_ranges = get_dmx_ranges(timing_model, broadband_TOAs)
 
@@ -100,18 +111,20 @@ def filter_observations(toas, timing_model):
         valid_freqs = []
 
         mjds = broadband_TOAs.get_mjds().value
-        freqs = broadband_TOAs.get_freqs().value
+        freqs_GHz = broadband_TOAs.get_freqs().to(u.GHz).value
+        inv_freqs = np.power(freqs_GHz, -1.0)
+        max_inv_freq, min_inv_freq = np.amax(inv_freqs), np.amin(inv_freqs)
         valid_toas_mask = np.full(broadband_TOAs.ntoas, False)
 
         for window in dmx_ranges:
 
             in_window = (mjds > window[0]) & (mjds < window[1])
-            freqs_in_window = freqs[in_window]
+            freqs_in_window = freqs_GHz[in_window]
 
-#            has_lower = np.any((725 <= freqs_in_window) & (freqs_in_window <= 916))
-#            has_upper = np.any((1156 <= freqs_in_window) & (freqs_in_window <= 1882))
+            has_lower = np.any((0.725 <= freqs_in_window) & (freqs_in_window <= 0.916))
+            has_upper = np.any((1.156 <= freqs_in_window) & (freqs_in_window <= 1.882))
 
-            has_lower, has_upper = True, True
+#            has_lower, has_upper = True, True
             if has_lower and has_upper:
                 valid_toas_mask |= in_window
 
@@ -120,8 +133,8 @@ def filter_observations(toas, timing_model):
                 valid_dmx_ranges.append(window)
                 valid_resids.append(res_object.time_resids.to(u.us).value)
     #            valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
-                valid_xvals.append(map_domain(freqs_in_window))
-                valid_freqs.append(freqs)
+                valid_xvals.append(map_domain(freqs_in_window, max_inv_freq, min_inv_freq))
+                valid_freqs.append(freqs_GHz)
 
         valid_toas = broadband_TOAs[valid_toas_mask]
         valid_res_object = Residuals(valid_toas, timing_model)
@@ -143,9 +156,10 @@ def filter_observations(toas, timing_model):
 
         logdet_C = logdet_N + logdet_Phi + logdet_Sigma
 
-        return FilteredObservations(PSR_name=timing_model.PSR.value, dmx_ranges=np.array(valid_dmx_ranges), Cinv=Cinv, logdet_C=logdet_C,
-                                    Ndiag=Ndiag, U=U, Sigma_cf=Sigma_cf,
-                                    xvals=valid_xvals, freqs=valid_freqs, resids=valid_resids)  # , resids_errs=valid_resids_errs)
+        return DataObject(PSR_name=timing_model.PSR.value, dmx_ranges=np.array(valid_dmx_ranges),
+                        max_inv_freq=max_inv_freq, min_inv_freq=min_inv_freq,
+                        Cinv=Cinv, logdet_C=logdet_C, Ndiag=Ndiag, U=U, Sigma_cf=Sigma_cf,
+                        xvals=valid_xvals, freqs=valid_freqs, resids=valid_resids)  # , resids_errs=valid_resids_errs)
 
 
 def make_plot(PSR_name, df):

@@ -32,14 +32,14 @@ def fit_and_eval(args):
     return y - pfit(x)
 
 
-def lnlike(theta, filtered_obs, weight=False):
+def lnlike(theta, data_obj, weight=False):
 
     a1, a3, a5 = theta
     c1c3c5 = leg.poly2leg([0.0, a1, 0.0, a3, 0.0, a5])[[1, 3, 5]]
 
     diffs_arr = []
 
-    for x, y in zip(filtered_obs.xvals, filtered_obs.resids):
+    for x, y in zip(data_obj.xvals, data_obj.resids):
 
         # Calculate the coefficients for the unscaled and unshifted Legendre basis polynomials
         c0c2c4 = my_legfit_minimal(x=x, y=y.astype(np.float64), deg=5, coeffs=c1c3c5)
@@ -56,11 +56,11 @@ def lnlike(theta, filtered_obs, weight=False):
     # Use these differences to calculate the ln(likelihood)
     diffs_arr = (np.concatenate(diffs_arr) * u.us).to(u.s).value
 
-#    sig_tot = np.concatenate(filtered_obs.resids_errs)
+#    sig_tot = np.concatenate(data_obj.resids_errs)
 #    lnL = -0.5 * np.sum(np.log(2 * np.pi) + 2 * np.log(sig_tot) + (diffs_arr / sig_tot) ** 2)
-#    lnlikelihood = -0.5 * (diffs_arr @ filtered_obs.Cinv @ diffs_arr.T + filtered_obs.logdet_C)
+#    lnlikelihood = -0.5 * (diffs_arr @ data_obj.Cinv @ diffs_arr.T + data_obj.logdet_C)
 
-    return lnlikelihood(filtered_obs, diffs_arr)
+    return lnlikelihood(data_obj, diffs_arr)
 
 
 def lnlikelihood(pre_calcs, s) -> float:
@@ -80,13 +80,13 @@ def lnlikelihood(pre_calcs, s) -> float:
     return -(x_Cinv_y / 2 + pre_calcs.logdet_C / 2)
 
 
-def lnprob(theta, filtered_obs, weight=False):
-    lp = log_prior(theta, filtered_obs.PSR_name)
+def lnprob(theta, data_obj, weight=False):
+    lp = log_prior(theta, data_obj.PSR_name)
 
     if not np.isfinite(lp):
         return -np.inf
 
-    return lp + lnlike(theta, filtered_obs, weight=weight)
+    return lp + lnlike(theta, data_obj, weight=weight)
 
 
 # http://jakevdp.github.io/blog/2015/08/07/frequentism-and-bayesianism-5-model-selection/
