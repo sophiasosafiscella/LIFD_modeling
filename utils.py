@@ -243,6 +243,7 @@ def epoch_scrunch(toas, data=None, errors=None, epochs=None, decimals=0, getdict
         return epochs, retval
     return epochs, retval, retvalerrs
 
+
 def corner_plot(samples, PSR_name):
     fig = corner.corner(
         samples,
