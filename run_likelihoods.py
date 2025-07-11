@@ -14,8 +14,8 @@ import os.path
 import sys
 
 # Global parameters
-#PSR_name: str = "J1643-1224"
-PSR_name: str = "J1024-0719"
+PSR_name: str = "J1643-1224"
+#PSR_name: str = "J1024-0719"
 #PSR_name: str = "J1903+0327"
 
 print(f"Running {PSR_name}...")
@@ -45,6 +45,8 @@ else:
         pickle.dump(data_obj, f)
     print("Done!")
 
+sys.exit()
+
 # Initial position in the 3D space of (C1, C3, C5) from where the walkers will start. I got the values from the
 # plots I created previously
 pinit = load_pinit(PSR_name)
@@ -59,7 +61,7 @@ else:
     print("Done!")
 
 # Present the results
-#corner_plot(samples, PSR_name)
+corner_plot(samples, PSR_name)
 
 param_labels = ["$a_1$", "$a_3$", "$a_5$"]
 quantiles = [16, 50, 84]  # For 68% credible interval
@@ -114,7 +116,7 @@ else:
     a0a2a4.to_pickle(a0a2a4_file)
 
 # Plot the results
-#plot_a0a2a4(PSR_name, data_obj, a0a2a4)
+plot_a0a2a4(PSR_name, data_obj, a0a2a4)
 
 
 
