@@ -26,7 +26,7 @@ def log_prior(theta, psr_name):
         if 50 < a1 < 450 and -60.0 < a3 < 30.0 and -80.0 < a5 < 40.0:
             return 0.0
     elif psr_name == "J1024-0719":
-        if -7000 < a1 < -5000 and -1000.0 < a3 < 1000.0 and -100.0 < a5 < 600.0:
+        if -7000 < a1 < -7000 and -1000.0 < a3 < 1500.0 and -100.0 < a5 < 800.0:
             return 0.0
     elif psr_name == "J1903+0327":
         if -1000 < a1 < 1000 and -1000.0 < a3 < 1000.0 and -1000.0 < a5 < 1000.0:
