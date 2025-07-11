@@ -89,13 +89,16 @@ def reverse_mapping(x_values, max_inv_freq, min_inv_freq):
     return frequencies
 
 
-def get_data(toas, timing_model):
+def get_data(psr_name, toas, timing_model):
         """Given TOAs, extract broadband observations and select DMX windows with both frequency bands."""
 
         # Filter for GUPPI backend only
-        backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
-        broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
-#        broadband_TOAs = toas
+        if psr_name == "J1643-1224":
+            backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
+            broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
+        else:
+            broadband_TOAs = toas
+
         # Find the DMX windows
         dmx_ranges = get_dmx_ranges(timing_model, broadband_TOAs)
 
@@ -120,10 +123,12 @@ def get_data(toas, timing_model):
             in_window = (mjds > window[0]) & (mjds < window[1])
             freqs_in_window = freqs_GHz[in_window]
 
-            has_lower = np.any((0.725 <= freqs_in_window) & (freqs_in_window <= 0.916))
-            has_upper = np.any((1.156 <= freqs_in_window) & (freqs_in_window <= 1.882))
+            if psr_name == "J1643-1224":
+                has_lower = np.any((0.725 <= freqs_in_window) & (freqs_in_window <= 0.916))
+                has_upper = np.any((1.156 <= freqs_in_window) & (freqs_in_window <= 1.882))
+            else:
+                has_lower, has_upper = True, True
 
-#            has_lower, has_upper = True, True
             if has_lower and has_upper:
                 valid_toas_mask |= in_window
 
@@ -417,10 +422,10 @@ def get_FD_curve_values(p, freqs, DM0=0.0):
     ts, dmx, errs, R1s, R2s, _, _ = p.getDMX(full_output=True)
     F1s = np.amin(freqs)
     F2s = np.amax(freqs)
-    F1 = np.min(F1s)/1000.0 #in GHz
-    F2 = np.max(F2s)/1000.0
+#    F1 = np.min(F1s)/1000.0 #in GHz
+#    F2 = np.max(F2s)/1000.0
 
-    fs = np.arange(F1, F2, 0.001)
+    fs = np.arange(F1s, F2s, 0.001)
 
 #    shift = -K*((DM+dmx[0])-DM0)/fs**2
     shift = 0.0

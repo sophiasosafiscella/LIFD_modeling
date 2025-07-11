@@ -14,8 +14,8 @@ import os.path
 import sys
 
 # Global parameters
-PSR_name: str = "J1643-1224"
-#PSR_name: str = "J1024-0719"
+#PSR_name: str = "J1643-1224"
+PSR_name: str = "J1024-0719"
 #PSR_name: str = "J1903+0327"
 
 print(f"Running {PSR_name}...")
@@ -40,7 +40,7 @@ if os.path.exists(pickle_file):
         data_obj = pickle.load(f)
 else:
     print("Filtering observations...")
-    data_obj = get_data(toas, timing_model)
+    data_obj = get_data(PSR_name, toas, timing_model)
     with open(pickle_file, "wb") as f:
         pickle.dump(data_obj, f)
     print("Done!")
@@ -59,7 +59,7 @@ else:
     print("Done!")
 
 # Present the results
-corner_plot(samples, PSR_name)
+#corner_plot(samples, PSR_name)
 
 param_labels = ["$a_1$", "$a_3$", "$a_5$"]
 quantiles = [16, 50, 84]  # For 68% credible interval
@@ -76,6 +76,7 @@ for i in range(samples.shape[1]):
 
 # Plot the FD curves
 fig, ax = plt.subplots()
+fig.suptitle(PSR_name)
 a1a3a5 = np.median(samples, axis=0)                                  # Calculate the maximum posterior coefficients
 poly = Polynomial([0.0, a1a3a5[0], 0.0, a1a3a5[1], 0.0, a1a3a5[2]])  # Construct the power series polynomial
 xvals = np.arange(-1.0, 1.0, 0.001)           # Create values of the normalized inverse frequency between -1 and 1
@@ -92,14 +93,13 @@ DM = p.getDM()
 
 # Frequencies and delays for the model as it is
 fs, ys_FD = get_FD_curve_values(p, freqs, DM0=DM)
-
 ax.plot(fs, ys_FD, 'k', label="NG15's FD model")
 F1, F2 = freqs[0], freqs[-1]
 Fdiff = F2 - F1
 ax.set_xlim(F1 - 0.1 * Fdiff, F2 + 0.1 * Fdiff)
 
-ax.set_xlabel(r"Frequency~(GHz)")
-ax.set_ylabel(r"Residual~($\mu$s)")
+ax.set_xlabel(r"Frequency (GHz)")
+ax.set_ylabel(r"Residual ($\mu$s)")
 
 plt.legend()
 plt.tight_layout()
@@ -114,7 +114,7 @@ else:
     a0a2a4.to_pickle(a0a2a4_file)
 
 # Plot the results
-plot_a0a2a4(PSR_name, data_obj, a0a2a4)
+#plot_a0a2a4(PSR_name, data_obj, a0a2a4)
 
 
 
