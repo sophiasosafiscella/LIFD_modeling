@@ -100,7 +100,7 @@ def lnprob(theta, data_obj, weight=False):
 
 
 # http://jakevdp.github.io/blog/2015/08/07/frequentism-and-bayesianism-5-model-selection/
-def compute_mcmc(lnprob, args, pinit, nwalkers=10, niter=20000):
+def compute_mcmc(lnprob, args, pinit, nwalkers=10, niter=10000):
 
     # Number of variables we're MCMCing over
     ndim = len(pinit)
