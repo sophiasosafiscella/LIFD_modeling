@@ -29,6 +29,7 @@ class DataObject:
     U: np.matrix
     Sigma_cf: np.matrix
     xvals: list[np.ndarray]
+    freqs: list[np.ndarray]
     resids: list[np.ndarray]
 
 
@@ -106,6 +107,7 @@ def get_data(toas, timing_model):
         valid_dmx_ranges = []
         valid_resids = []
         valid_xvals = []
+        valid_freqs = []
 
         mjds = broadband_TOAs.get_mjds().value
         freqs_GHz = broadband_TOAs.get_freqs().to(u.GHz).value
@@ -131,6 +133,7 @@ def get_data(toas, timing_model):
                 valid_resids.append(res_object.time_resids.to(u.us).value)
     #            valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
                 valid_xvals.append(map_domain(freqs_in_window, max_inv_freq, min_inv_freq))
+                valid_freqs.append(freqs_GHz)
 
         valid_toas = broadband_TOAs[valid_toas_mask]
         valid_res_object = Residuals(valid_toas, timing_model)
@@ -155,7 +158,7 @@ def get_data(toas, timing_model):
         return DataObject(PSR_name=timing_model.PSR.value, dmx_ranges=np.array(valid_dmx_ranges),
                         max_inv_freq=max_inv_freq, min_inv_freq=min_inv_freq,
                         Cinv=Cinv, logdet_C=logdet_C, Ndiag=Ndiag, U=U, Sigma_cf=Sigma_cf,
-                        xvals=valid_xvals, resids=valid_resids)  # , resids_errs=valid_resids_errs)
+                        xvals=valid_xvals, freqs=valid_freqs, resids=valid_resids)  # , resids_errs=valid_resids_errs)
 
 
 def make_plot(PSR_name, df):
