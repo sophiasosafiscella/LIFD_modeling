@@ -14,9 +14,9 @@ import os.path
 import sys
 
 # Global parameters
-#PSR_name: str = "J1643-1224"
+PSR_name: str = "J1643-1224"
 #PSR_name: str = "J1024-0719"
-PSR_name: str = "J1903+0327"
+#PSR_name: str = "J1903+0327"
 
 print(f"Running {PSR_name}...")
 
