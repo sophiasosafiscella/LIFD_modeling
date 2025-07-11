@@ -45,8 +45,6 @@ else:
         pickle.dump(data_obj, f)
     print("Done!")
 
-sys.exit()
-
 # Initial position in the 3D space of (C1, C3, C5) from where the walkers will start. I got the values from the
 # plots I created previously
 pinit = load_pinit(PSR_name)

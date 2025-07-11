@@ -23,7 +23,7 @@ def load_pinit(psr_name):
 def log_prior(theta, psr_name):
     a1, a3, a5 = theta  # These are priors on the MONIMIAl coefficients, not on the LEGENDRE coefficients
     if psr_name == "J1643-1224":
-        if 250 < a1 < 450 and -30.0 < a3 < 30.0 and -40.0 < a5 < 40.0:
+        if 50 < a1 < 450 and -60.0 < a3 < 30.0 and -80.0 < a5 < 40.0:
             return 0.0
     elif psr_name == "J1024-0719":
         if -7000 < a1 < -5000 and -1000.0 < a3 < 1000.0 and -100.0 < a5 < 600.0:
@@ -115,8 +115,8 @@ def compute_mcmc(lnprob, args, pinit, nwalkers=10, niter=20000):
 
     # Burn the ends of the samples chains
     if niter <= 50000:
-#        burn = int(niter/10)
-        burn = int(niter / 5)
+        burn = int(niter/10)
+#        burn = int(niter / 5)
     if burn > 5000:
         burn = 5000
 
