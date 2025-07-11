@@ -93,8 +93,8 @@ def get_data(toas, timing_model):
 
         # Filter for GUPPI backend only
         backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
-        broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
-        #broadband_TOAs = toas
+#        broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
+        broadband_TOAs = toas
         # Find the DMX windows
         dmx_ranges = get_dmx_ranges(timing_model, broadband_TOAs)
 
@@ -118,10 +118,10 @@ def get_data(toas, timing_model):
             in_window = (mjds > window[0]) & (mjds < window[1])
             freqs_in_window = freqs_GHz[in_window]
 
-            has_lower = np.any((0.725 <= freqs_in_window) & (freqs_in_window <= 0.916))
-            has_upper = np.any((1.156 <= freqs_in_window) & (freqs_in_window <= 1.882))
+#            has_lower = np.any((0.725 <= freqs_in_window) & (freqs_in_window <= 0.916))
+#            has_upper = np.any((1.156 <= freqs_in_window) & (freqs_in_window <= 1.882))
 
-#            has_lower, has_upper = True, True
+            has_lower, has_upper = True, True
             if has_lower and has_upper:
                 valid_toas_mask |= in_window
 
