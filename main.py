@@ -26,7 +26,7 @@ def find_dispersion_coefficients(psr_name:str, fixed_coeffs:bool=True, plot:bool
     # Input files
     parfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.0.1/narrowband/par/{psr_name}_PINT_*.nb.par")[0]
     timfile: str = glob(f"./NANOGrav15yr_PulsarTiming_v2.0.1/narrowband/tim/{psr_name}_PINT_*.nb.tim")[0]
-    pickle_file: str = f"./results/{PSR_name}/{PSR_name}_filtered_obs.pkl"
+    pickle_file: str = f"./results/{PSR_name}/{PSR_name}_data_obj.pkl"
 
     # Load the timing model and TOAs
     timing_model = get_model(parfile)  # Ecliptical coordiantes
@@ -48,7 +48,7 @@ def find_dispersion_coefficients(psr_name:str, fixed_coeffs:bool=True, plot:bool
         with open(pickle_file, "rb") as f:
             filtered_obs = pickle.load(f)
     else:
-        filtered_obs = get_data(toas, timing_model)
+        filtered_obs = get_data(psr_name, toas, timing_model)
         with open(pickle_file, "wb") as f:
             pickle.dump(filtered_obs, f)
 
@@ -112,9 +112,14 @@ def find_dispersion_coefficients(psr_name:str, fixed_coeffs:bool=True, plot:bool
 
 if __name__ == "__main__":
 
+    PSR_name: str = "B1937+21"
 #    PSR_name: str = "J1643-1224"
-    PSR_name: str = "J1024-0719"
+#    PSR_name: str = "J1024-0719"
 #    PSR_name: str = "J1903+0327"
+#    PSR_name: str = "J1741+1351"
+#    PSR_name: str = "J1744-1134"
+#    PSR_name: str = "J0613-0200"
+#    PSR_name: str = "J2145-0750"
     if not os.path.exists('./results/' + PSR_name + '_results.csv'):
         df = find_dispersion_coefficients(PSR_name)
         df.to_csv('./results/' + PSR_name + '_results.csv')

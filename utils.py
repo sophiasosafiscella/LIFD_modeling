@@ -4,15 +4,17 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.offsetbox import AnchoredText
-from scipy.linalg import cho_factor, cho_solve
+from scipy.linalg import cho_factor
+from numpy.polynomial.polynomial import Polynomial
 import corner
 import pint
 from pint.residuals import Residuals
 from pypulse.utils import weighted_moments
+from pypulse.par import Par
 import astropy.units as u
 from dataclasses import dataclass
-
 from uncertainties import unumpy, ufloat
+from uncertainties.unumpy import nominal_values
 
 from fit_coefficients import my_legfit_full
 
@@ -77,7 +79,7 @@ def map_domain(frequencies, max_inv_freq, min_inv_freq):
     x_aux_values = (lambdas - min_inv_freq)/(max_inv_freq-min_inv_freq)  # Between 0 and 1
     x_values = np.subtract(np.multiply(x_aux_values, 2.0), 1.0)          # Between -1 and 1
 
-    return x_values
+    return np.asarray(x_values, dtype=np.float64)
 
 def reverse_mapping(x_values, max_inv_freq, min_inv_freq):
 
@@ -93,9 +95,12 @@ def get_data(psr_name, toas, timing_model):
     """Given TOAs, extract broadband observations and select DMX windows with both frequency bands."""
 
     # Filter for GUPPI backend only
-    if psr_name == "J1643-1224":
+    if psr_name == "J1643-1224" or psr_name=="J2145-0750" or psr_name=="J1744-1134":    # Remove GASP observations
         backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
-        broadband_TOAs = toas[np.isin(backends, ["GUPPI"])]
+        broadband_TOAs = toas[~np.isin(backends, ["GASP"])]
+    elif psr_name == "J1903+0327" or psr_name == "B1937+21":  # Remove ASP observations
+        backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
+        broadband_TOAs = toas[~np.isin(backends, ["ASP"])]
     else:
         broadband_TOAs = toas
 
@@ -121,6 +126,9 @@ def get_data(psr_name, toas, timing_model):
     for window in dmx_ranges:
 
         in_window = (mjds > window[0]) & (mjds < window[1])
+        if in_window.sum() == 0:  # If there are no observations inside this DMX window, skip it
+            continue
+
         freqs_in_window = freqs_GHz[in_window]
 
         if psr_name == "J1643-1224":
@@ -133,12 +141,11 @@ def get_data(psr_name, toas, timing_model):
             valid_toas_mask |= in_window
 
             res_object = Residuals(broadband_TOAs[in_window], timing_model)
+            valid_resids.append(np.asarray(res_object.time_resids.to(u.us).value, dtype=np.float64))
 
             valid_dmx_ranges.append(window)
-            valid_resids.append(res_object.time_resids.to(u.us).value)
-#            valid_resids_errs.append(res_object.get_data_error().value)  # TODO: we are assuming there's no correlation (for now)
             valid_xvals.append(map_domain(freqs_in_window, max_inv_freq, min_inv_freq))
-            valid_freqs.append(freqs_GHz)
+            valid_freqs.append(freqs_in_window)
 
     valid_toas = broadband_TOAs[valid_toas_mask]
     valid_res_object = Residuals(valid_toas, timing_model)
@@ -147,18 +154,15 @@ def get_data(psr_name, toas, timing_model):
     U = valid_res_object.model.noise_model_designmatrix(valid_res_object.toas)
     Phidiag = valid_res_object.model.noise_model_basis_weight(valid_res_object.toas)
 
-#    Ninv = np.diag(1.0/ Ndiag)
-#    Ninv_U = np.diag(1.0 / Ndiag) @ U
-    Sigma = np.diag(1.0 / Phidiag) + (U.T / Ndiag) @ U
+    Sigma = np.diag(1.0 / Phidiag) + (U.T / Ndiag) @ U  # See Eq. 13 of https://iopscience.iop.org/article/10.3847/1538-4357/ad59f7/pdf
     Sigma_cf = cho_factor(Sigma)
-
-#    Cinv = Ninv - Ninv_U @ cho_solve(Sigma_cf, Ninv_U.T)
 
     logdet_N = np.sum(np.log(Ndiag))
     logdet_Phi = np.sum(np.log(Phidiag))
     _, logdet_Sigma = np.linalg.slogdet(Sigma.astype(float))
 
     logdet_C = logdet_N + logdet_Phi + logdet_Sigma
+    logdet_C = np.asarray(logdet_C, dtype=np.float64)
 
     return DataObject(PSR_name=timing_model.PSR.value, dmx_ranges=np.array(valid_dmx_ranges),
                     max_inv_freq=max_inv_freq, min_inv_freq=min_inv_freq,
@@ -271,7 +275,7 @@ def corner_plot(samples, PSR_name):
         contour_kwargs={"colors": ["black"]}
     )
 
-    fig.savefig(f"./results/{PSR_name}_corner_plot.png", dpi=300)
+    fig.savefig(f"./results/{PSR_name}/{PSR_name}_corner_plot.png", dpi=300)
     plt.show()
 
 def my_leg2poly(u_leg_coeffs):
@@ -322,6 +326,7 @@ def find_a0a2a4(PSR_name, filtered_obs, a1a3a5, plot=False):
         # Find the coefficients and corresponding uncertaintites in the monomial base
         u_leg_coeffs = unumpy.umatrix(leg_coeffs, [c0c2c4_errs[0], 0.0, c0c2c4_errs[1], 0.0, c0c2c4_errs[2], 0.0])
         u_poly_coeffs = my_leg2poly(u_leg_coeffs)
+        nom_values = np.array(unumpy.nominal_values(u_poly_coeffs))[:, 0]
 
         a0a2a4_arr[[n], :] = u_poly_coeffs[[0, 2, 4]].nominal_values.T
         a0a2a4_err_arr[[n], :] = u_poly_coeffs[[0, 2, 4]].std_devs.T
@@ -335,7 +340,7 @@ def find_a0a2a4(PSR_name, filtered_obs, a1a3a5, plot=False):
             ax2.set_xlabel("Frequency [MHz]")
             ax2.set_ylabel(r'Residuals [$\mu s$]')
             at = AnchoredText(
-                f"Power series coefficients: \n $a_0$ = {u_poly_coeffs[0].nominal_value} \n $a_1$ = {u_poly_coeffs[1].nominal_value} \n $a_2$ = {u_poly_coeffs[2].nominal_value} \n $a_3$ = {u_poly_coeffs[3].nominal_value} \n $a_4$ = {u_poly_coeffs[4].nominal_value} \n $a_5$ = {u_poly_coeffs[5].nominal_value}",
+                f"Power series coefficients: \n $a_0$ = {nom_values[0]} \n $a_1$ = {nom_values[1]} \n $a_2$ = {nom_values[2]} \n $a_3$ = {nom_values[3]} \n $a_4$ = {nom_values[4]} \n $a_5$ = {nom_values[5]}",
                 prop=dict(size=10), frameon=True, loc='upper right')
             at.patch.set_boxstyle("round,pad=0.,rounding_size=0.2")
             ax2.add_artist(at)
@@ -347,7 +352,7 @@ def find_a0a2a4(PSR_name, filtered_obs, a1a3a5, plot=False):
 
             plt.suptitle("MJD " + str(window[0]) + " to " + str(window[1]))
             plt.tight_layout()
-            plt.savefig(f"./results/final_fits/{PSR_name}/diffs_{n}.png")
+            plt.savefig(f"./results/{PSR_name}/plots/diffs_{n}.png")
             plt.show()
 
     return pd.DataFrame(np.hstack((a0a2a4_arr, a0a2a4_err_arr)), columns=['a0', 'a2', 'a4', 'a0_err', 'a2_err', 'a4_err'])
@@ -367,7 +372,8 @@ def plot_a0a2a4(PSR_name, filtered_obs, a0a2a4):
     # Plot and label each subplot
     colors = ['C0', 'C1', 'C2']
     for i in range(3):
-        ax[i].errorbar(x=windows_centers, y=a0a2a4[f'a{2*i}'], yerr=a0a2a4[f'a{2*i}_err'], color=colors[i], fmt='o')
+        ax[i].scatter(x=windows_centers, y=a0a2a4[f'a{2*i}'], color=colors[i])
+#        ax[i].errorbar(x=windows_centers, y=a0a2a4[f'a{2*i}'], yerr=a0a2a4[f'a{2*i}_err'], color=colors[i], fmt='o')
         ax[i].set_ylabel(f"$a_{2*i}~[\mu$s]")
         ax[i].grid(True)  # Add grid
         ax[i].label_outer()  # Hide inner x labels and ticks
@@ -380,33 +386,26 @@ def plot_a0a2a4(PSR_name, filtered_obs, a0a2a4):
     u_a2_new = u_a2 / D
     a2_new = np.squeeze(np.asarray(u_a2_new.nominal_values))
     a2_new_err = np.squeeze(np.asarray(u_a2_new.std_devs))
-    '''
-    D = 4.148808e9
+
+#    D_MHz = 4.148808e3  # MHz^2 * pc^-1 * cm^3 * s
+    D_GHz = 4.148808e-3  # GHz^2 * pc^-1 * cm^3 * s
     def a2_natural(y):
-        return y / D
+        return y / D_GHz
 
     def a2_natural_inverse(y):
-        return y * D
+        return y * D_GHz
 
     secax = ax[1].secondary_yaxis('right', functions=(a2_natural, a2_natural_inverse))
     secax.set_ylabel('$a_2~[\mathrm{pc}~\mathrm{cm}^3]$')
 
-    ax[0].errorbar(x=windows_centers, y=a0a2a4['a0'], yerr=a0a2a4[f'a0_err'], color=colors[0], fmt='o')
+#    ax[0].errorbar(x=windows_centers, y=a0a2a4['a0'], yerr=a0a2a4[f'a0_err'], color=colors[0], fmt='o')
 #    ax[1].errorbar(x=windows_centers, y=a2_new, yerr=a2_new_err, color=colors[1], fmt='o')
-    ax[2].errorbar(x=windows_centers, y=a0a2a4['a4'], yerr=a0a2a4['a4_err'], color=colors[2], fmt='o')
-
-#    ax[0].set_ylabel('$a_0~[\mu \mathrm{s}]$')
-#    ax[1].set_ylabel('$a_2~[\mathrm{pc}~\mathrm{cm}^3]$')
-#    ax[2].set_ylabel('$a_4~[\mu \mathrm{s}]$')
-    ax[0].set_ylim([-100.0,120.0])
-#    ax[1].set_ylim([0.0,150.0])
-#    ax[2].set_ylim([-80.0,80.0])
-
-
+#    ax[2].errorbar(x=windows_centers, y=a0a2a4['a4'], yerr=a0a2a4['a4_err'], color=colors[2], fmt='o')
+    '''
     ax[2].set_xlabel("Window Center [MJD]")
 
     plt.tight_layout()
-#    plt.savefig(f'./results/{PSR_name}/{PSR_name}_a0a2a4_results.png')
+    plt.savefig(f'./results/{PSR_name}/{PSR_name}_a0a2a4_results.png')
     plt.show()
 
     return
@@ -434,3 +433,37 @@ def get_FD_curve_values(p, freqs, DM0=0.0):
     ys -= np.mean(ys)
 
     return fs, ys
+
+
+def plot_FD_curve(PSR_name, parfile, data_obj, samples):
+    # Plot the FD curves
+    fig, ax = plt.subplots()
+    fig.suptitle(PSR_name)
+    a1a3a5 = np.median(samples, axis=0)  # Calculate the maximum posterior coefficients
+    poly = Polynomial([0.0, a1a3a5[0], 0.0, a1a3a5[1], 0.0, a1a3a5[2]])  # Construct the power series polynomial
+    x_vals = np.arange(-1.0, 1.0, 0.001)  # Create values of the normalized inverse frequency between -1 and 1
+    ys = poly(x_vals)  # Evaluate the power series polynomial at those inverse frequencies
+    ys -= np.mean(ys)
+
+    # Transform the inverse frequencies to normal frequencies (in GHz)
+    frequencies = reverse_mapping(x_vals, data_obj.max_inv_freq, data_obj.min_inv_freq)
+    ax.plot(frequencies, ys, label="$a_1 x + a_3 x^3 + a_5 x^5$")
+
+    # FD model
+    p = Par(parfile, numwrap=float)
+    DM = p.getDM()
+
+    # Frequencies and delays for the model as it is
+    fs, ys_FD = get_FD_curve_values(p, frequencies, DM0=DM)
+    ax.plot(fs, ys_FD, 'k', label="NG15's FD model")
+    F1, F2 = frequencies[0], frequencies[-1]
+    Fdiff = F2 - F1
+    ax.set_xlim(F1 - 0.1 * Fdiff, F2 + 0.1 * Fdiff)
+
+    ax.set_xlabel(r"Frequency (GHz)")
+    ax.set_ylabel(r"Residual ($\mu$s)")
+
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(f"./results/{PSR_name}/{PSR_name}_FD_curve.png")
+    plt.show()
