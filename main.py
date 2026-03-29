@@ -5,13 +5,13 @@ from glob import glob
 from pint.fitter import WLSFitter
 from pint.models import get_model
 from pint.toa import get_TOAs
-from new_LIFD import LIFD
+from LIFD_class import LIFD
 
 
 # Global parameters
 #PSR_name: str = "J0030+0451"
 #PSR_name: str = "B1937+21"
-#PSR_name: str = "J1643-1224"
+PSR_name: str = "J1643-1224"
 #PSR_name: str = "J1024-0719"
 #PSR_name: str = "J1903+0327"
 #PSR_name: str = "J1741+1351"
@@ -19,7 +19,7 @@ from new_LIFD import LIFD
 #PSR_name: str = "J0613-0200"
 #PSR_name: str = "J2145-0750"
 #PSR_name: str = "J1909-3744"
-PSR_name: str = "J1918-0642"
+#PSR_name: str = "J1918-0642"
 
 print(f"Running {PSR_name}...")
 
@@ -44,12 +44,15 @@ if change_dm:
         params = {"DM": (10.391378695991417 * timing_model.DM.units, 1, 0 * timing_model.DM.units)}
     elif PSR_name == "J1918-0642":
         #params = {"DM": (26.5889 * timing_model.DM.units, 1, 0 * timing_model.DM.units)}
-        #params = {"DM": (26.589879853155644 * timing_model.DM.units, 1, 0 * timing_model.DM.units)}
-        params = {"DM": (26.9 * timing_model.DM.units, 1, 0 * timing_model.DM.units)}
+        params = {"DM": (26.589879853155644 * timing_model.DM.units, 1, 0 * timing_model.DM.units)}
+        #params = {"DM": (26.9 * timing_model.DM.units, 1, 0 * timing_model.DM.units)}
     elif PSR_name == "J1744-1134":
         params = {"DM": (3.139 * timing_model.DM.units, 1, 0 * timing_model.DM.units)}
         #params = {"DM": (3.14021942492064 * timing_
         # model.DM.units, 1, 0 * timing_model.DM.units)}
+    elif PSR_name == "J1643-1224":
+        params = {"DM": (62.40364974119315 * timing_model.DM.units, 1, 0 * timing_model.DM.units)}
+
 
     for name, info in params.items():
         par = getattr(timing_model, name)  # Get parameter object from name
@@ -92,6 +95,7 @@ x_vals = np.sort(LIFD.map_lambda_to_unit(lambdas, lmin, lmax))  # fixed mapping 
 
 # Get the y values
 coeffs = [getattr(new_model, f"LIFD{i}").value for i in range(1, n_LIFD+1)]
+np.save(f"./results/{PSR_name}/LIFD_coeffs.npy", coeffs)
 y_vals = legval(x_vals, coeffs)
 y_vals_musec = y_vals * 1e6
 

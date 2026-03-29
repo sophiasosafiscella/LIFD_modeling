@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import numpy.polynomial.legendre as leg
 import pandas as pd
@@ -34,25 +36,20 @@ class DataObject:
     resids: list[np.ndarray]
 
 
-def get_dmx_ranges(model, observations):
+def get_dmx_ranges(model, mjds):
     """
     Return an array of the MJD range for each DMX parameter corresponding to a given set of observations_in_window
     """
 
-    mjds = observations.get_mjds().value
-    dmx_parameters = model.components['DispersionDMX']  # names of the DMX_xxxx parameters
+    dmx_model = model.components['DispersionDMX']  # names of the DMX_xxxx parameters
 
-    DMXR1_names = [a for a in dir(dmx_parameters) if a.startswith('DMXR1')]
-    DMXR2_names = [a for a in dir(dmx_parameters) if a.startswith('DMXR2')]
+    # List containing the MJDs of the beginning and end of each DMX window
+    DMXR = np.fromiter(((dmx_model._parent[f"DMXR1_{idx:04d}"].value, dmx_model._parent[f"DMXR2_{idx:04d}"].value)
+                        for idx in dmx_model.get_indices()), dtype=np.dtype((float, 2)))
 
-    DMXR1_values = [getattr(dmx_parameters, par).value for par in DMXR1_names]
-    DMXR2_values = [getattr(dmx_parameters, par).value for par in DMXR2_names]
-
-    DMXR = np.column_stack((DMXR1_values, DMXR2_values))  # Zip the two arrays
-
-    # Out of all the DMX windows, we will only keep those with at least one TOA inside it
-    mask = (DMXR1_values < max(mjds)) & (DMXR2_values > min(mjds))
-
+    # Mask all the DMX windows that do not contain any TOAs
+    mask = np.any(((DMXR[:, 0, None] <= mjds) & (mjds <= DMXR[:, 1, None])), axis=1)
+    
     return DMXR[mask]
 
 
@@ -94,90 +91,64 @@ def get_data(psr_name, toas, timing_model):
 
     """Given TOAs, extract broadband observations and select DMX windows with both frequency bands."""
 
-    # Filter for GUPPI backend only
-    if psr_name == "J1643-1224" or psr_name=="J2145-0750" or psr_name=="J1744-1134":    # Remove GASP observations
-        backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
-        broadband_TOAs = toas[~np.isin(backends, ["GASP"])]
-    elif psr_name == "J1903+0327" or psr_name == "B1937+21":  # Remove ASP observations
-        backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
-        broadband_TOAs = toas[~np.isin(backends, ["ASP"])]
-    else:
-        broadband_TOAs = toas
+    # Filter out narrowband receivers
+    backends = np.array([toas.table["flags"][obs]["be"] for obs in range(len(toas.table["flags"]))])
+    broadband_TOAs = toas[~np.isin(backends, ["GASP", "ASP"])]
 
-    # Find the DMX windows
-    dmx_ranges = get_dmx_ranges(timing_model, broadband_TOAs)
+    # Extract relevant information from the broadband TOAs
+    broadband_mjds = broadband_TOAs.get_mjds().value                     # MJDs of the broadband TOAs
+    broadband_dmx_ranges = get_dmx_ranges(timing_model, broadband_mjds)  # Find the DMX windows with broadband TOAs
+    freqs_GHz = broadband_TOAs.get_freqs().to(u.GHz).value               # Frequencies in GHz
+    inverse_freqs = np.power(freqs_GHz, -1)                              # Inverse frequencies in GHz^(-1)
+    max_inv_freq, min_inv_freq = np.amax(inverse_freqs), np.amin(inverse_freqs)
+    xvals = map_domain(freqs_GHz, max_inv_freq, min_inv_freq)            # Inverse of the frequencies, mapped to [-1, 1]
 
     # Get rid of the DMX and FD parameters to create the simplified timing model
     timing_model.remove_component("DispersionDMX")
     timing_model.remove_component("FD")
 
-    # Precompute outputs
-    valid_dmx_ranges = []
-    valid_resids = []
-    valid_xvals = []
-    valid_freqs = []
+    # Calculate the residuals
+    res_object = Residuals(broadband_TOAs, timing_model)
+    residuals = np.asarray(res_object.time_resids.to(u.us).value, dtype=np.float64)
 
-    mjds = broadband_TOAs.get_mjds().value
-    freqs_GHz = broadband_TOAs.get_freqs().to(u.GHz).value
-    max_freq, min_freq = np.amax(freqs_GHz), np.amin(freqs_GHz)      # Maximum and minimum frequencies
-    max_inv_freq, min_inv_freq = max_freq ** (-1), min_freq ** (-1)  # Inverse of max and min frequencies
-    valid_toas_mask = np.full(broadband_TOAs.ntoas, False)
+    # Find the matrices that we will use to calculate the residuals and covariance matrix
+    Ndiag = res_object.model.scaled_toa_uncertainty(broadband_TOAs).to_value(u.s) ** 2
+    U = res_object.model.noise_model_designmatrix(res_object.toas)
+    Phidiag = res_object.model.noise_model_basis_weight(res_object.toas)
 
-    for window in dmx_ranges:
-
-        in_window = (mjds > window[0]) & (mjds < window[1])
-        if in_window.sum() == 0:  # If there are no observations inside this DMX window, skip it
-            continue
-
-        freqs_in_window = freqs_GHz[in_window]
-
-        if psr_name == "J1643-1224":
-            has_lower = np.any((0.725 <= freqs_in_window) & (freqs_in_window <= 0.916))
-            has_upper = np.any((1.156 <= freqs_in_window) & (freqs_in_window <= 1.882))
-        else:
-            has_lower, has_upper = True, True
-
-        if has_lower and has_upper:
-            valid_toas_mask |= in_window
-
-            res_object = Residuals(broadband_TOAs[in_window], timing_model)
-            valid_resids.append(np.asarray(res_object.time_resids.to(u.us).value, dtype=np.float64))
-
-            valid_dmx_ranges.append(window)
-            valid_xvals.append(map_domain(freqs_in_window, max_inv_freq, min_inv_freq))
-            valid_freqs.append(freqs_in_window)
-
-    valid_toas = broadband_TOAs[valid_toas_mask]
-    valid_res_object = Residuals(valid_toas, timing_model)
-
-    Ndiag = valid_res_object.model.scaled_toa_uncertainty(valid_toas).to_value(u.s) ** 2
-    U = valid_res_object.model.noise_model_designmatrix(valid_res_object.toas)
-    Phidiag = valid_res_object.model.noise_model_basis_weight(valid_res_object.toas)
-
-    Sigma = np.diag(1.0 / Phidiag) + (U.T / Ndiag) @ U  # See Eq. 13 of https://iopscience.iop.org/article/10.3847/1538-4357/ad59f7/pdf
+    # See Eq. 13 of https://iopscience.iop.org/article/10.3847/1538-4357/ad59f7/pdf
+    Sigma = np.diag(1.0 / Phidiag) + (U.T / Ndiag) @ U
     Sigma_cf = cho_factor(Sigma)
 
     logdet_N = np.sum(np.log(Ndiag))
     logdet_Phi = np.sum(np.log(Phidiag))
     _, logdet_Sigma = np.linalg.slogdet(Sigma.astype(float))
 
-    logdet_C = logdet_N + logdet_Phi + logdet_Sigma
-    logdet_C = np.asarray(logdet_C, dtype=np.float64)
+    logdet_C = np.asarray(logdet_N + logdet_Phi + logdet_Sigma, dtype=np.float64)
 
-    return DataObject(PSR_name=timing_model.PSR.value, dmx_ranges=np.array(valid_dmx_ranges),
+    # Create window masks using array operations
+    window_masks = [(broadband_mjds > window[0]) & (broadband_mjds < window[1]) for window in broadband_dmx_ranges]
+
+    # Apply masks to create grouped arrays using list comprehensions
+    resids = [residuals[mask] for mask in window_masks]
+    xvals = [xvals[mask] for mask in window_masks]
+    freqs = [freqs_GHz[mask] for mask in window_masks]
+
+    return DataObject(PSR_name=timing_model.PSR.value, dmx_ranges=broadband_dmx_ranges,
                     max_inv_freq=max_inv_freq, min_inv_freq=min_inv_freq,
                     logdet_C=logdet_C, Ndiag=Ndiag, U=U, Sigma_cf=Sigma_cf,
-                    xvals=valid_xvals, freqs=valid_freqs, resids=valid_resids)  # , resids_errs=valid_resids_errs)
+                    xvals=xvals, freqs=freqs, resids=resids)  # , resids_errs=valid_resids_errs)
 
 
-def make_plot(PSR_name, df):
+def plot_all_coeffs_fit(PSR_name, df):
     windows_centers = df["DMXR1"] + (df["DMXR2"] - df["DMXR1"]) / 2.0
 
     sns.set_style("ticks")
     sns.set_context("paper", font_scale=3.0)
     fig, ax = plt.subplots(nrows=6, ncols=1, figsize=(12, 24), sharex=True,
                            gridspec_kw={'hspace': 0})
-    fig.suptitle(PSR_name + " - Monomial Coefficients")
+    fig.suptitle(PSR_name + " - Monomial Coefficients in $x$ \n $t_\\nu = b_0 + b_1 x + b_2 x^2 + b_3 x^3 + b_4 x^4 + b_5 x^5$")
+
 
     means = df[['a0', 'a1', 'a2', 'a3', 'a4', 'a5']].mean(axis=0)
     print(f"a1 = {means['a1']}")
@@ -189,7 +160,7 @@ def make_plot(PSR_name, df):
     for i in range(6):
         ax[i].scatter(windows_centers, df[f'a{i}'], color=colors[i])
         ax[i].axhline(y=means[f'a{i}'], color='black', lw=4, linestyle='--')
-        ax[i].set_ylabel(f"$a_{i}$")
+        ax[i].set_ylabel(f"$b_{i} [ns]$")
         ax[i].grid(True)  # Add grid
         ax[i].label_outer()  # Hide inner x labels and ticks
 
@@ -374,7 +345,7 @@ def plot_a0a2a4(PSR_name, filtered_obs, a0a2a4):
     for i in range(3):
         ax[i].scatter(x=windows_centers, y=a0a2a4[f'a{2*i}'], color=colors[i])
 #        ax[i].errorbar(x=windows_centers, y=a0a2a4[f'a{2*i}'], yerr=a0a2a4[f'a{2*i}_err'], color=colors[i], fmt='o')
-        ax[i].set_ylabel(f"$a_{2*i}~[\mu$s]")
+        ax[i].set_ylabel(f"$a_{2*i}$ [ns]")
         ax[i].grid(True)  # Add grid
         ax[i].label_outer()  # Hide inner x labels and ticks
 
@@ -413,7 +384,7 @@ def plot_a0a2a4(PSR_name, filtered_obs, a0a2a4):
 
 def get_FD_curve_values(p, freqs, DM0=0.0):
 
-    FDfunc = p.getFDfunc()
+    FDfunc = p.getFDfunc()   # Frequency is in GHz, returns values of microseconds
     if FDfunc is None:
         return
 
@@ -447,7 +418,7 @@ def plot_FD_curve(PSR_name, parfile, data_obj, samples):
 
     # Transform the inverse frequencies to normal frequencies (in GHz)
     frequencies = reverse_mapping(x_vals, data_obj.max_inv_freq, data_obj.min_inv_freq)
-    ax.plot(frequencies, ys, label="$a_1 x + a_3 x^3 + a_5 x^5$")
+    ax.plot(frequencies, ys * 10**(-3), label="$a_1 x + a_3 x^3 + a_5 x^5$")
 
     # FD model
     p = Par(parfile, numwrap=float)
@@ -455,7 +426,7 @@ def plot_FD_curve(PSR_name, parfile, data_obj, samples):
 
     # Frequencies and delays for the model as it is
     fs, ys_FD = get_FD_curve_values(p, frequencies, DM0=DM)
-    ax.plot(fs, ys_FD, 'k', label="NG15's FD model")
+    ax.plot(fs, ys_FD * 10**(-3), 'k', label="NG15's FD model")
     F1, F2 = frequencies[0], frequencies[-1]
     Fdiff = F2 - F1
     ax.set_xlim(F1 - 0.1 * Fdiff, F2 + 0.1 * Fdiff)
